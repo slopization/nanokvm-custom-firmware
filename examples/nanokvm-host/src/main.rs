@@ -1,0 +1,142 @@
+mod alsa_pcm;
+mod audio;
+mod auth;
+mod cli;
+mod display;
+mod external;
+mod gadget;
+mod hevc;
+mod hid;
+mod hid_report;
+mod media;
+mod pairing_manager;
+mod settings;
+mod usb_status;
+mod v4l2_provider;
+mod web;
+
+use clap::Parser;
+use moonlink_core::{PairingPin, ServerConfig};
+use moonlink_tokio::{FilePairingStore, ServerBuilder};
+
+use crate::cli::{Args, SourceKind};
+use crate::gadget::{GadgetConfig, setup_usb_gadget};
+use crate::hid::UsbGadgetInputSink;
+use crate::media::HostMediaProvider;
+use crate::pairing_manager::PairingManager;
+use crate::settings::{MoonlinkSettings, SettingsStore};
+use crate::usb_status::{monitor_usb_attachment, primary_ipv4, udc_state_path};
+use crate::web::serve_web;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = Args::parse();
+    let settings_store = SettingsStore::open(
+        args.settings_store.clone(),
+        MoonlinkSettings::from_args(&args),
+    )?;
+    let running_settings = settings_store.get().await;
+    running_settings.apply(&mut args);
+    let auth = auth::AuthState::open();
+    let pairing_store = FilePairingStore::open(args.pairing_store.clone()).await?;
+    let pairing_manager = PairingManager::default();
+    let ip_address = primary_ipv4()?.to_string();
+
+    let _usb_gadget = if args.setup_usb_gadget {
+        Some(setup_usb_gadget(&GadgetConfig::from_args(&args))?)
+    } else {
+        None
+    };
+    let input_sink = UsbGadgetInputSink::open(args.hid_path(), args.trace_pointer_input).await?;
+
+    let source_kind = args.source_kind()?;
+    let audio = args.audio_settings();
+    let runtime_config = running_settings.runtime_config()?;
+
+    let config = ServerConfig::new(
+        args.name.clone(),
+        args.bind_http,
+        args.bind_http,
+        args.bind_rtsp,
+        runtime_config.capabilities,
+    )
+    .with_https_bind(args.bind_https)
+    .with_stream_ports(args.bind_video, args.bind_audio, args.bind_control)
+    .with_video_stream(runtime_config.video_stream);
+
+    let mut config = config;
+    config.pairing_pin = args
+        .pin
+        .clone()
+        .map(PairingPin::static_pin)
+        .unwrap_or_else(|| PairingPin::provider(pairing_manager.clone()));
+
+    let provider = match source_kind {
+        SourceKind::Command(command) => {
+            HostMediaProvider::command(command, audio, settings_store.clone())
+        }
+        SourceKind::V4l2(settings) => {
+            HostMediaProvider::v4l2(settings, audio, settings_store.clone())
+        }
+    };
+
+    let (display_tx, display_rx) = tokio::sync::watch::channel(None);
+    let display_device = args.display_device.clone();
+    let display_transform = args.display_transform;
+    let display_task = tokio::spawn(async move {
+        if let Err(err) = display::run_display(&display_device, display_transform, display_rx).await
+        {
+            eprintln!("OLED display stopped: {err}");
+        }
+    });
+    let usb_task = if args.setup_usb_gadget {
+        let state_path = udc_state_path(args.udc.as_deref())?;
+        let usb_ip_address = ip_address.clone();
+        let usb_auth = auth.clone();
+        Some(tokio::spawn(async move {
+            if let Err(err) =
+                monitor_usb_attachment(state_path, usb_ip_address, usb_auth, display_tx).await
+            {
+                eprintln!("USB attachment monitor stopped: {err}");
+            }
+        }))
+    } else {
+        None
+    };
+
+    let handle = ServerBuilder::new(config)
+        .media_provider(provider)
+        .input_sink(input_sink)
+        .pairing_store(pairing_store.clone())
+        .serve()
+        .await?;
+    let web_task = tokio::spawn(serve_web(
+        args.bind_web,
+        auth.clone(),
+        settings_store,
+        ip_address.clone(),
+        pairing_manager,
+        pairing_store.clone(),
+        handle.controller(),
+    ));
+
+    println!(
+        "nanokvm host listening: http={}, https={}, discovery={}, rtsp={}",
+        handle.http_addr(),
+        handle.https_addr(),
+        handle.discovery_addr(),
+        handle.rtsp_addr()
+    );
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result?,
+        result = web_task => {
+            result.map_err(std::io::Error::other)??;
+        }
+    }
+    handle.shutdown().await?;
+    display_task.abort();
+    if let Some(usb_task) = usb_task {
+        usb_task.abort();
+    }
+    Ok(())
+}

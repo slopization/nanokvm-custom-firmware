@@ -1,0 +1,29 @@
+[package]
+name = "nanokvm-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+audiopus_sys.workspace = true
+axum.workspace = true
+bytes.workspace = true
+clap.workspace = true
+drm.workspace = true
+hex.workspace = true
+hidreport.workspace = true
+libc.workspace = true
+moonlink-core = { path = "../../crates/moonlink-core" }
+moonlink-protocol = { path = "../../crates/moonlink-protocol" }
+moonlink-tokio = { path = "../../crates/moonlink-tokio" }
+moonlink-v4l2 = { path = "../../crates/moonlink-v4l2" }
+oxideav-bitstream.workspace = true
+opus.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ssmarshal.workspace = true
+tokio.workspace = true
+usb-gadget.workspace = true
+usbd-hid.workspace = true

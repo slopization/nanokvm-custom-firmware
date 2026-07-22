@@ -1,0 +1,13 @@
+[package]
+name = "basic-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+moonlink-core = { path = "../../crates/moonlink-core" }
+moonlink-protocol = { path = "../../crates/moonlink-protocol" }
+moonlink-tokio = { path = "../../crates/moonlink-tokio" }
+tokio.workspace = true

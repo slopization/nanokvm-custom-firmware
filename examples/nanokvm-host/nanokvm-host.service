@@ -1,0 +1,14 @@
+[Unit]
+Description=Moonlink NanoKVM host
+After=network-online.target systemd-modules-load.service sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nanokvm-host --capture-device /dev/video0 --encoder-device /dev/video1 --raw-fourcc UYVY --codec hevc --capture-fps 60 --frame-divider 1 --gop 120 --setup-usb-gadget --audio uac2
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
