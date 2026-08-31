@@ -1,0 +1,79 @@
+li.right#shortcuts-dropdown
+	.menu-item.menu-button(href="#") Shortcuts
+
+	.hidden.menu#shortcuts-menu
+		.text
+			b Quick keyboard shortcuts#[br]
+			sub Also see #[i System &rarr; Show keyboard]
+
+		.buttons
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="CapsLock")
+					| &bull; Caps Lock &nbsp;
+					img.inline-lamp-small.hid-keyboard-caps-led.led-gray(src=`${svg_dir}/led-square.svg`)
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="MetaLeft") &bull; Left Win
+			hr
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="AltLeft ShiftLeft") &bull; Alt+Shift
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="ControlLeft KeyW") &bull; Ctrl+W
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="ControlLeft ShiftLeft") &bull; Ctrl+Shift
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="AltLeft Tab") &bull; Alt+Tab
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="ShiftLeft ShiftRight") &bull; Shift+Shift
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="AltLeft Enter") &bull; Alt+Enter
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="MetaLeft Space") &bull; Win+Space
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="AltLeft F4") &bull; Alt+F4
+			hr
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="ControlLeft AltLeft F1") &bull; Ctrl+Alt+F1
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="MetaLeft KeyL") &bull; Win+L
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="ControlLeft AltLeft F2") &bull; Ctrl+Alt+F2
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="PrintScreen") &bull; Print Screen
+			hr
+			.buttons-row
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="ControlLeft AltLeft Delete") &bull; Ctrl+Alt+Del
+				button.row50(data-wm-menu-force-hide data-keyboard-shortcut="Power") &bull; Power
+
+		.text
+			| &darr; &bull; Alt+SysRq+... <sup><i>linux magic
+			| #[a(target="_blank" href="https://www.kernel.org/doc/html/latest/admin-guide/sysrq.html") help]</i></sup>
+
+		.buttons
+			.buttons-row
+				-
+					let sysrq = {
+						"F": "Call the OOM killer to kill a memory hog process",
+						"M": "Dump current memory info to the console",
+						"D": "Show all locks that are held",
+						"T": "Dump a list of current tasks and their information to the console",
+					}
+				each title, key in sysrq
+					button.row25(
+						data-keyboard-shortcut=`AltLeft PrintScreen Key${key}`
+						data-keyboard-shortcut-confirm="hid-sysrq-ask-switch"
+						style="text-align: center"
+						title=`${title}`
+					) #{key}
+			hr
+			.buttons-row
+				-
+					sysrq = { 
+						"R": "Turn off keyboard raw mode, set it to XLATE",
+						"E": "Send a SIGTERM to all processes, except for init",
+						"I": "Send a SIGKILL to all processes, except for init",
+						"S": "Attempt to sync all mounted filesystems",
+						"U": "Attempt to remount all mounted filesystems read-only",
+						"B": "Immediately reboot the system without syncing or unmounting disks",
+					}
+				each title, key in sysrq
+					button.row16(
+						data-keyboard-shortcut=`AltLeft PrintScreen Key${key}`
+						data-keyboard-shortcut-confirm="hid-sysrq-ask-switch"
+						style="text-align: center"
+						title=`${title}`
+					) #{key}
+
+		+menu_switch_table("hid-sysrq-ask-switch", true, true) Ask the magic confirmation:

@@ -1,0 +1,105 @@
+mixin navbar_led(id, icon, cls="led-gray")
+	img(id=id, class=cls src=`${svg_dir}/${icon}.svg`)
+
+
+mixin menu_message(icon, short, classes="")
+	.text
+		table
+			tr
+				td(rowspan="2") #[img(class=`sign ${classes}` src=`${svg_dir}/${icon}.svg`)]
+				td(style="line-height:1.5") #[b #{short}]
+			if block
+				tr
+					td
+						sup(style="line-height:1")
+							block
+
+
+mixin menu_switch_gpio(channel, confirm_off="")
+	.switch-box
+		input(
+			disabled
+			type="checkbox"
+			id=`__gpio-switch-${channel}`
+			class=`__gpio-switch-${channel} gpio-switch`
+			data-gpio-channel=channel
+			data-gpio-confirm-off=confirm_off
+		)
+		label(for=`__gpio-switch-${channel}`)
+			span.switch-inner
+			span.switch
+
+
+mixin menu_switch(id, enabled, checked)
+	.switch-box
+		input(checked=checked disabled=!enabled type="checkbox" id=id)
+		label(for=id)
+			span.switch-inner
+			span.switch
+
+
+mixin menu_switch_table(id, enabled, checked)
+	table.kv
+		tr
+			td
+				block
+			td #[+menu_switch(id, enabled, checked)]
+
+
+mixin menu_radio_items(name, items)
+	each item in items
+		-
+			let id = `${name}-${item["value"]}`
+			let checked = (item["checked"] || false)
+		input(type="radio" id=id name=name value=item["value"] checked=checked)
+		label(for=id) !{item["title"]}
+
+
+mixin menu_radio(name, items)
+	.radio-box
+		+menu_radio_items(name, items)
+
+
+mixin menu_slider(slider_id, value_id, enabled=true)
+	table
+		td.slider-inner
+			input(type="range" id=slider_id disabled=!enabled)
+		td.slider-value(id=value_id)
+
+
+mixin menu_spoiler(title)
+	details
+		summary !{title}
+		div(class="spoiler")
+			block
+
+
+button.hidden#navbar-show-button(data-wm-navbar-show data-wm-on-full-tab)
+
+ul#navbar
+	li.left
+		a.menu-item.menu-action(href=root_prefix)
+			div &larr;
+			img.svg-gray(src=`${svg_dir}/logo.svg` alt="&pi;-kvm" style="height: 25px;")
+
+	include navbar-health.pug
+
+	.hidden#navbar-stream-info(data-wm-on-full-tab)
+		li.left
+			.menu-item
+				#stream-info
+
+	.hidden(data-wm-on-full-tab)
+		li.right
+			.menu-item
+				button(data-wm-navbar-close style="width: 50px; height: 30px;")
+				button(data-wm-normalize style="width: 30px; height: 30px;")
+
+	include navbar-system.pug
+	include navbar-atx.pug
+	include navbar-msd.pug
+	include navbar-macro.pug
+	include navbar-text.pug
+	include navbar-shortcuts.pug
+	include navbar-gpio.pug
+	include navbar-switch.pug

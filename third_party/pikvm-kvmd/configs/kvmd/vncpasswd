@@ -1,0 +1,9 @@
+# This file contains passwords for the legacy VNCAuth, one per line.
+# The passwords are NOT encrypted.
+#
+# WARNING! The VNCAuth method is NOT secure and should not be used at all.
+# But we support it for compatibility with some clients.
+#
+# NEVER use the same passwords for KVMD, IPMI and VNCAuth users.
+
+admin

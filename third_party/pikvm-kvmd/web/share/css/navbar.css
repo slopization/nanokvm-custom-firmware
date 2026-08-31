@@ -1,0 +1,262 @@
+/*****************************************************************************
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+*****************************************************************************/
+
+
+button#navbar-show-button {
+    position: absolute;
+	top: 100px;
+    right: 0;
+    width: 16px;
+    height: 50px;
+	padding: 0;
+	line-height: 0;
+	writing-mode: vertical-lr;
+	border: var(--border-navbar-menu-active-2px);
+	border-right: none;
+	border-radius: 8px 0 0 8px;
+    z-index: 2147483644;
+	transition: all 0.25s ease 0s;
+	transition-behavior: allow-discrete;
+}
+button#navbar-show-button.hidden {
+	opacity: 0;
+	/*right: -16px;*/
+}
+
+ul#navbar {
+	box-shadow: var(--shadow-small);
+	list-style-type: none;
+	margin: 0;
+	padding: 0;
+	background-color: var(--cs-navbar-default-bg);
+	position: fixed;
+	top: 0;
+	width: 100%;
+	z-index: 2147483646;
+	transition: all 0.25s ease 0s;
+	transition-behavior: allow-discrete;
+}
+ul#navbar.hidden {
+	opacity: 0;
+	/*top: -50px;*/
+}
+
+ul#navbar li.right {
+	height: 50px;
+	border-left: var(--border-navbar-item-thin);
+	float: right;
+}
+
+ul#navbar li.left {
+	height: 50px;
+	border-right: var(--border-navbar-item-thin);
+	float: left;
+}
+
+ul#navbar li .menu-item {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	outline: none;
+	color: var(--cs-navbar-default-fg);
+	text-decoration: none;
+	position: relative;
+	padding-left: 14px;
+	padding-right: 14px;
+}
+ul#navbar li .menu-item img {
+	height: 20px;
+}
+
+ul#navbar li .menu-action {
+	cursor: pointer;
+}
+ul#navbar li .menu-action:hover {
+	background-color: var(--cs-navbar-item-hovered-bg);
+}
+
+ul#navbar li .menu-button {
+	cursor: pointer;
+}
+ul#navbar li .menu-button:hover:not(.menu-button-pressed) {
+	background-color: var(--cs-navbar-item-hovered-bg);
+}
+
+ul#navbar li .menu-button-pressed {
+	box-shadow: var(--shadow-navbar-item-pressed);
+	background-color: var(--cs-navbar-item-pressed-bg) !important;
+}
+ul#navbar li .menu-button:hover:not(.menu-button-pressed) {
+	background-color: var(--cs-navbar-item-hovered-bg);
+}
+
+/*ul#navbar li .menu-button:before {
+	content: "";
+	position: absolute;
+	top: calc(100% - 10px);
+	right: 0;
+	width: 0;
+	border-bottom: 10px solid var(--cs-navbar-item-pressed-bg);
+	border-left: 10px solid transparent;
+}*/
+
+ul#navbar li div.menu {
+	outline: none;
+	overflow-x: hidden;
+	overflow-y: auto;
+	max-height: calc(100vh - 55px);
+	white-space: nowrap;
+	border: var(--border-navbar-menu-default-2px);
+	border-top: var(--border-navbar-menu-top-thin);
+	border-radius: 0 0 8px 8px;
+	position: absolute;
+	background-color: var(--cs-navbar-default-bg);
+	box-shadow: var(--shadow-big);
+	z-index: 2147483645;
+}
+ul#navbar li div.menu-active {
+	border: var(--border-navbar-menu-active-2px) !important;
+	border-top: var(--border-navbar-menu-top-thin) !important;
+}
+
+ul#navbar li div.menu::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+ul#navbar li div.menu::-webkit-scrollbar-thumb {
+	border-radius: 4px;
+	background: var(--cs-scroll-default-bg);
+}
+@-moz-document url-prefix() {
+	ul#navbar li div.menu {
+		/* scrollbar-width: 8px; px is not supported */
+		scrollbar-color: var(--cs-scroll-default-bg) var(--cs-code-default-bg);
+	}
+}
+
+ul#navbar li div.menu details summary {
+	cursor: pointer;
+	outline: none;
+	list-style: none;
+	text-decoration: underline;
+	text-decoration-style: dashed;
+	text-underline-position: under;
+	margin: 8px 15px 8px 15px;
+	font-size: 12px;
+}
+ul#navbar li div.menu details summary::before {
+	content: "";
+	display: inline-block;
+	background-image: url("../svg/mark.svg");
+	background-size: cover;
+	width: 8px;
+	height: 8px;
+	margin-right: 4px;
+	transition: 0.2s;
+}
+ul#navbar li div.menu details[open] summary::before {
+	transform: rotate(90deg);
+}
+ul#navbar li div.menu details summary::-webkit-details-marker {
+	display: none;
+}
+ul#navbar li div.menu details div.spoiler {
+	margin-left: 20px !important;
+	margin-bottom: 10px;
+	border-left: var(--border-default-thin);
+	border-bottom: var(--border-default-thin);
+}
+
+ul#navbar li div.menu div.buttons {
+	background-color: var(--cs-control-default-bg);
+	border-top: var(--border-control-thin);
+	border-bottom: var(--border-control-thin);
+}
+ul#navbar li div.menu div.buttons button,
+ul#navbar li div.menu div.buttons select {
+	border-radius: 0;
+	text-align: left;
+	padding: 0 16px;
+	width: 100%;
+}
+
+ul#navbar li div.menu div.buttons hr {
+	border-top: var(--border-control-thin);
+}
+
+ul#navbar li div.menu div.text {
+	margin: 10px 15px 10px 15px;
+	font-size: 14px;
+}
+
+ul#navbar li div.menu input[type=text] {
+	height: 1.5em;
+}
+ul#navbar li div.menu input[type=text]::-moz-placeholder {
+	text-align: center;
+}
+ul#navbar li div.menu input[type=text]::-webkit-input-placeholder {
+	text-align: center;
+}
+
+ul#navbar li div.menu hr {
+	height: 0;
+	margin: 0;
+	padding: 0;
+}
+
+ul#navbar li div.menu img.sign {
+	vertical-align: middle;
+	margin-right: 10px;
+	height: 20px;
+}
+
+ul.navbar-bg-tips {
+	list-style-type: none;
+	top: 50px;
+	position: fixed;
+	width: 100%;
+	padding: 0;
+	font-size: 0.7em;
+	line-height: 1.5em;
+	color: var(--cs-page-obscure-fg);
+	z-index: -10;
+}
+ul.navbar-bg-tips li {
+	padding: 0 10px;
+	max-width: 20%;
+}
+ul.navbar-bg-tips li pre {
+	word-break: break-word;
+	white-space: break-spaces;
+	text-align: justify;
+}
+ul.navbar-bg-tips li.left {
+	float: left;
+}
+ul.navbar-bg-tips li.right {
+	float: right;
+}
+ul.navbar-bg-tips li a {
+	color: var(--cs-page-obscure-fg);
+}

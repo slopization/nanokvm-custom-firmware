@@ -1,0 +1,40 @@
+###############################################################################
+#                                                                             #
+#  Override KVMD settings.                                                    #
+#                                                                             #
+#    * https://docs.pikvm.org/config                                          #
+#                                                                             #
+#  This file uses YAML syntax. All overridden parameters will be applied      #
+#  AFTER all other configs and BEFORE validation.                             #
+#                                                                             #
+#  Values must be combined under common sections.                             #
+#                                                                             #
+###############################################################################
+#
+#########
+# Wrong #
+#########
+#kvmd:
+#    gpio:
+#        drivers: ...
+#kvmd:
+#    gpio:
+#        scheme: ...
+#
+###########
+# Correct #
+###########
+#kvmd:
+#    gpio:
+#        drivers: ...
+#        scheme: ...
+#
+###########
+# Example #
+###########
+#vnc:
+#    # See https://docs.pikvm.org/vnc
+#    keymap: /usr/share/kvmd/keymaps/ru # Set russian keymap
+#    auth:
+#        vncauth:
+#            enabled: true # Enable auth via /etc/kvmd/vncpasswd

@@ -1,0 +1,6 @@
+# You can write down any information and it will be available
+# at the address /api/info?legacy=0
+# To change PiKVM's hostname, use "hostnamectl hostname <new>".
+
+server:
+    host: "@auto"
