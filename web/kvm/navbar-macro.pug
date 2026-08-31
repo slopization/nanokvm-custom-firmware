@@ -1,0 +1,32 @@
+li.right#macro-dropdown
+	.menu-item.menu-button(href="#")
+		+navbar_led("hid-recorder-led", "led-gear")
+		span Macro
+
+	.hidden.menu
+		.text
+			b Record and play Keyboard/Mouse/ATX/GPIO actions#[br]
+			sub For security reasons, the record will not be saved on the PiKVM
+
+		.buttons.buttons-row
+			button.row25#hid-recorder-record(disabled data-wm-menu-force-hide) &bull; Rec
+			button.row25#hid-recorder-stop(disabled) Stop
+			button.row25#hid-recorder-play(disabled) Play
+			button.row25#hid-recorder-clear(disabled) Clear
+
+		table.kv
+			tr
+				td Script time:
+				td.value#hid-recorder-time(colspan="2") 00:00:00.0
+			tr
+				td Scripted events:
+				td.value#hid-recorder-events-count 0
+				td #[sup #[i include delays]]
+		hr
+
+		+menu_switch_table("hid-recorder-loop-switch", false, false) Infinite loop playback:
+
+		input#hid-recorder-new-script-file(type="file" style="display: none")
+		.buttons.buttons-row
+			button.row50#hid-recorder-upload(disabled) Upload script
+			button.row50#hid-recorder-download(disabled) Download script

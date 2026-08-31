@@ -1,0 +1,110 @@
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
+
+
+from ...plugins.hid import get_hid_class
+from ...plugins.atx import get_atx_class
+from ...plugins.msd import get_msd_class
+
+from .. import init
+
+from .auth import AuthManager
+from .info import InfoManager
+from .logreader import LogReader
+from .ugpio import UserGpio
+from .streamer import Streamer
+from .snapshoter import Snapshoter
+from .ocr import Ocr
+from .switch import Switch
+from .server import KvmdServer
+
+
+# =====
+def main() -> None:
+    ia = init(
+        prog="kvmd",
+        description="The main PiKVM daemon",
+        check_run=True,
+        load_auth=True,
+        load_hid=True,
+        load_atx=True,
+        load_msd=True,
+        load_gpio=True,
+    )
+
+    global_config = ia.config
+    config = ia.config.kvmd
+
+    hid = get_hid_class(config.hid.type)(config.hid)
+
+    streamer = Streamer(
+        **config.streamer._unpack(ignore=["forever", "desired_fps", "resolution", "h264_bitrate", "h264_gop"]),
+        **config.streamer.resolution._unpack(),
+        **config.streamer.desired_fps._unpack(),
+        **config.streamer.h264_bitrate._unpack(),
+        **config.streamer.h264_gop._unpack(),
+    )
+
+    KvmdServer(
+        auth=AuthManager(
+            enabled=config.auth.enabled,
+            expire=config.auth.expire,
+            extend=config.auth.extend,
+            usc_users=(config.auth.usc.kvmd_users + config.auth.usc.users),
+            usc_groups=(config.auth.usc.kvmd_groups + config.auth.usc.groups),
+            unauth_paths=([] if config.prometheus.auth.enabled else ["/export/prometheus/metrics"]),
+
+            int_c=config.auth.internal,
+            ext_c=config.auth.external,
+
+            force_int_users=config.auth.internal.force_users,
+
+            totp_secret_path=config.auth.totp.secret.file,
+        ),
+        im=InfoManager(global_config),
+        log_reader=(LogReader() if config.log_reader.enabled else None),
+        ugpio=UserGpio(config.gpio),
+        ocr=Ocr(**config.ocr._unpack()),
+
+        switch=Switch(
+            device_path=config.switch.device,
+            default_edid_path=config.switch.default_edid,
+            ignore_hpd_on_top=config.switch.ignore_hpd_on_top,
+            pst=ia.make_pst_client("__switch__", "KVMD"),
+        ),
+
+        hid=hid,
+        atx=get_atx_class(config.atx.type)(config.atx),
+        msd=get_msd_class(config.msd.type)(config.msd, ia.make_nbd_client("KVMD")),
+        streamer=streamer,
+
+        snapshoter=Snapshoter(
+            hid=hid,
+            streamer=streamer,
+            **config.snapshot._unpack(),
+        ),
+
+        allow_redirects=config.auth.allow_redirects,
+
+        keymap_path=config.hid.keymap,
+
+        stream_forever=config.streamer.forever,
+    ).run(**config.server._unpack())

@@ -1,0 +1,11 @@
+# This file describes the credentials for IPMI users in format "login:password",
+# one per line. The passwords are NOT encrypted.
+#
+# WARNING! IPMI protocol is completely unsafe by design. In short, the authentication
+# process for IPMI 2.0 mandates that the server send a salted SHA1 or MD5 hash of the
+# requested user's password to the client, prior to the client authenticating.
+#
+# NEVER use the same passwords for KVMD and IPMI users.
+# This default configuration is shown here just for the example only.
+
+admin:admin

@@ -1,0 +1,17 @@
+li.right.feature-disabled#atx-dropdown
+	.menu-item.menu-button(href="#")
+		+navbar_led("atx-power-led", "led-atx-power")
+		+navbar_led("atx-hdd-led", "led-atx-hdd")
+		span ATX
+
+	.hidden.menu
+		.text
+			b Control the host power#[br]
+			sub Use the short click for ACPI shutdown
+		hr
+		+menu_switch_table("atx-ask-switch", true, true) Ask click confirmation:
+		.buttons
+			button#atx-power-button(disabled data-wm-menu-force-hide) &bull; Click Power #[sup #[i short]]
+			button#atx-power-button-long(disabled data-wm-menu-force-hide) &bull; Click Power #[sup #[i long]]
+			hr
+			button#atx-reset-button(disabled data-wm-menu-force-hide) &bull; Click Reset

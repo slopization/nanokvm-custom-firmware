@@ -1,0 +1,47 @@
+extends ../base.pug
+
+
+append vars
+	-
+		root_prefix = "../"
+		title = "PiKVM Session"
+		main_js = "kvm/main"
+		body_class = "body-no-select"
+		css_list.push(
+			"navbar", "window", "modal", "led", "slider",
+			"switch", "radio", "progress", "keypad", "tabs",
+			"kvm/stream", "kvm/msd",
+			"kvm/system", "kvm/keyboard", "kvm/about"
+		)
+
+
+block head
+	link(rel="preload" href=`${svg_dir}/stream-mouse-cursor.svg` as="image")
+	link(rel="preload" href=`${pic_dir}/blank-stream.webp` as="image")
+
+
+block body
+	include navbar.pug
+	include windows.pug
+
+	ul.navbar-bg-tips
+		li.left
+			pre#kvmd-meta-tips-left
+		li.right
+			pre#kvmd-meta-tips-right
+
+	ul.footer
+		li.left
+			span#kvmd-node-host(title="PiKVM Hostname")
+			| &nbsp; | &nbsp;
+			span#kvmd-info-platform(title="PiKVM Platform")
+			| &nbsp; | &nbsp;
+			span#kvmd-version-kvmd(title="KVMD version")
+			| &nbsp; | &nbsp;
+			span#kvmd-version-streamer(title="Streamer version")
+		li.right
+			a(target="_blank" href="https://pikvm.org") PiKVM Project
+			| &nbsp; | &nbsp;
+			a(target="_blank" href="https://docs.pikvm.org") Documentation
+			| &nbsp; | &nbsp;
+			a(target="_blank" href="https://pikvm.org/support") Support
