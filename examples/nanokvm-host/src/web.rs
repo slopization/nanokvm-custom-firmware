@@ -1,6 +1,8 @@
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use axum::body::Body;
 use axum::extract::{Path, Request, State};
 use axum::http::header::{CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -9,11 +11,16 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::auth::AuthState;
+use crate::cli::{AudioSettings, AudioSource, StreamCodec};
 use crate::pairing_manager::{PairingManager, PendingPairing};
+use crate::session_arbiter::{SessionArbiter, SessionOwner};
 use crate::settings::{MoonlinkSettings, SettingsStore};
-use moonlink_core::PairingStore;
+use crate::v4l2_provider::{V4l2Session, V4l2Settings, output_fps};
+use moonlink_core::{MediaSession, MediaSessionConfig, PairingStore, VideoControlMessage};
+use moonlink_protocol::VideoCodec;
 use moonlink_tokio::{FilePairingStore, ServerController};
 
 const SESSION_COOKIE: &str = "moonlink_session";
@@ -26,6 +33,8 @@ struct WebState {
     pairing_manager: PairingManager,
     pairing_store: FilePairingStore,
     server: ServerController,
+    arbiter: SessionArbiter,
+    web_v4l2: Option<V4l2Settings>,
 }
 
 #[derive(Serialize)]
@@ -33,6 +42,7 @@ struct Status {
     authenticated: bool,
     password_configured: bool,
     ip_address: String,
+    capture_owner: Option<SessionOwner>,
 }
 
 #[derive(Serialize)]
@@ -82,6 +92,8 @@ pub async fn serve_web(
     pairing_manager: PairingManager,
     pairing_store: FilePairingStore,
     server: ServerController,
+    arbiter: SessionArbiter,
+    web_v4l2: Option<V4l2Settings>,
 ) -> std::io::Result<()> {
     let state = WebState {
         auth,
@@ -90,6 +102,8 @@ pub async fn serve_web(
         pairing_manager,
         pairing_store,
         server,
+        arbiter,
+        web_v4l2,
     };
     let protected = Router::new()
         .route("/api/logout", post(logout))
@@ -101,6 +115,7 @@ pub async fn serve_web(
             post(submit_pairing_pin).delete(remove_pairing_device),
         )
         .route("/api/system/reboot", post(reboot))
+        .route("/api/kvm/stream", get(kvm_stream))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_authentication,
@@ -109,6 +124,10 @@ pub async fn serve_web(
         .route("/", get(index))
         .route("/style.css", get(stylesheet))
         .route("/app.js", get(script))
+        .route("/kvm.js", get(kvm_script))
+        .route("/libde265-worker.js", get(libde265_worker))
+        .route("/vendor/libde265/libde265.mjs", get(libde265_script))
+        .route("/vendor/libde265/libde265.wasm", get(libde265_wasm))
         .route("/api/status", get(status))
         .route("/api/login", post(login))
         .route("/api/password/recover", post(recover_password))
@@ -125,7 +144,7 @@ async fn index() -> Response {
     let mut response = Html(INDEX_HTML).into_response();
     response.headers_mut().insert(
         CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'self'; object-src 'none'; frame-ancestors 'none'"),
+        HeaderValue::from_static("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; frame-ancestors 'none'; worker-src 'self'"),
     );
     response
 }
@@ -138,12 +157,37 @@ async fn script() -> Response {
     ([(CONTENT_TYPE, "text/javascript; charset=utf-8")], APP_JS).into_response()
 }
 
+async fn kvm_script() -> Response {
+    ([(CONTENT_TYPE, "text/javascript; charset=utf-8")], KVM_JS).into_response()
+}
+
+async fn libde265_worker() -> Response {
+    (
+        [(CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        LIBDE265_WORKER,
+    )
+        .into_response()
+}
+
+async fn libde265_script() -> Response {
+    (
+        [(CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        LIBDE265_SCRIPT,
+    )
+        .into_response()
+}
+
+async fn libde265_wasm() -> Response {
+    ([(CONTENT_TYPE, "application/wasm")], LIBDE265_WASM).into_response()
+}
+
 async fn status(State(state): State<WebState>, headers: HeaderMap) -> Json<Status> {
     let authenticated = authenticate(&state.auth, &headers).await;
     Json(Status {
         authenticated,
         password_configured: state.auth.has_password().await,
         ip_address: state.ip_address,
+        capture_owner: state.arbiter.owner(),
     })
 }
 
@@ -274,6 +318,131 @@ async fn reboot() -> Response {
     message(StatusCode::ACCEPTED, "rebooting")
 }
 
+async fn kvm_stream(State(state): State<WebState>) -> Response {
+    let Some(mut settings) = state.web_v4l2.clone() else {
+        return message(
+            StatusCode::NOT_IMPLEMENTED,
+            "browser capture requires the V4L2 source",
+        );
+    };
+    let lease = match state.arbiter.acquire(SessionOwner::Web) {
+        Ok(lease) => lease,
+        Err(owner) => {
+            return message(
+                StatusCode::CONFLICT,
+                &format!("capture is owned by {owner:?}"),
+            );
+        }
+    };
+    let current = state.settings.get().await;
+    current.apply_v4l2(&mut settings);
+    settings.codec = StreamCodec::Hevc;
+    let fps = match output_fps(&settings) {
+        Ok(fps) => fps,
+        Err(err) => return message(StatusCode::BAD_REQUEST, &err.to_string()),
+    };
+    let config = MediaSessionConfig {
+        width: settings.capture_width,
+        height: settings.capture_height,
+        fps,
+        video_codec: VideoCodec::Hevc,
+        audio_codec: None,
+        ..MediaSessionConfig::default()
+    };
+    let audio = AudioSettings {
+        source: AudioSource::None,
+        pcm_device: None,
+        opus_bitrate_kbps: 128,
+        opus_complexity: 0,
+    };
+    let mut session = match V4l2Session::start(settings.clone(), audio, config).await {
+        Ok(session) => session,
+        Err(err) => return message(StatusCode::SERVICE_UNAVAILABLE, &err.to_string()),
+    };
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, Infallible>>(4);
+    let preamble = stream_preamble(settings.capture_width, settings.capture_height, fps);
+    sender
+        .try_send(Ok(bytes::Bytes::copy_from_slice(&preamble)))
+        .expect("new stream channel");
+    tokio::spawn(async move {
+        let _lease = lease;
+        let mut waiting_for_keyframe = false;
+        loop {
+            let frame = match session.next_encoded().await {
+                Ok(Some(frame)) => frame,
+                Ok(None) => continue,
+                Err(err) => {
+                    eprintln!("browser capture stopped: {err}");
+                    break;
+                }
+            };
+            if waiting_for_keyframe && !frame.keyframe {
+                continue;
+            }
+            let packet = match stream_packet(frame.bytes, frame.timestamp_90khz, frame.keyframe) {
+                Ok(packet) => packet,
+                Err(err) => {
+                    eprintln!("browser frame dropped: {err}");
+                    continue;
+                }
+            };
+            match sender.try_send(Ok(packet)) {
+                Ok(()) => waiting_for_keyframe = false,
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    if !waiting_for_keyframe {
+                        waiting_for_keyframe = true;
+                        let _ = session
+                            .handle_video_control(VideoControlMessage::RequestIdrFrame)
+                            .await;
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => break,
+            }
+        }
+        let _ = session.stop().await;
+    });
+
+    let mut response = Response::new(Body::from_stream(ReceiverStream::new(receiver)));
+    *response.status_mut() = StatusCode::OK;
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/vnd.nanokvm.hevc"),
+    );
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("no-store, no-transform"),
+    );
+    headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
+}
+
+fn stream_preamble(width: u32, height: u32, fps: u32) -> [u8; 24] {
+    let mut bytes = [0; 24];
+    bytes[..8].copy_from_slice(b"NKHEVC01");
+    bytes[8..12].copy_from_slice(&width.to_be_bytes());
+    bytes[12..16].copy_from_slice(&height.to_be_bytes());
+    bytes[16..20].copy_from_slice(&fps.to_be_bytes());
+    bytes[20..24].copy_from_slice(&90_000_u32.to_be_bytes());
+    bytes
+}
+
+fn stream_packet(
+    payload: Vec<u8>,
+    timestamp: u32,
+    keyframe: bool,
+) -> Result<bytes::Bytes, &'static str> {
+    let length =
+        u32::try_from(payload.len()).map_err(|_| "encoded frame exceeds protocol limit")?;
+    let mut packet = Vec::with_capacity(12 + payload.len());
+    packet.extend_from_slice(&length.to_be_bytes());
+    packet.extend_from_slice(&timestamp.to_be_bytes());
+    packet.push(u8::from(keyframe));
+    packet.extend_from_slice(&[0; 3]);
+    packet.extend_from_slice(&payload);
+    Ok(packet.into())
+}
+
 async fn authenticate(auth: &AuthState, headers: &HeaderMap) -> bool {
     match session_token(headers) {
         Some(token) => auth.validate_session(token).await,
@@ -335,3 +504,32 @@ fn message(status: StatusCode, body: &str) -> Response {
 const INDEX_HTML: &str = include_str!("../web/index.html");
 const STYLE_CSS: &str = include_str!("../web/style.css");
 const APP_JS: &str = include_str!("../web/app.js");
+const KVM_JS: &str = include_str!("../web/kvm.js");
+const LIBDE265_WORKER: &str = include_str!("../web/libde265-worker.js");
+const LIBDE265_SCRIPT: &str = include_str!("../web/vendor/libde265/libde265.mjs");
+const LIBDE265_WASM: &[u8] = include_bytes!("../web/vendor/libde265/libde265.wasm");
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    #[test]
+    fn stream_wire_format_is_network_order_and_self_delimiting() {
+        let preamble = stream_preamble(1920, 1080, 60);
+        assert_eq!(&preamble[..8], b"NKHEVC01");
+        assert_eq!(
+            u32::from_be_bytes(preamble[8..12].try_into().unwrap()),
+            1920
+        );
+        assert_eq!(
+            u32::from_be_bytes(preamble[20..24].try_into().unwrap()),
+            90_000
+        );
+
+        let packet = stream_packet(vec![1, 2, 3], 1500, true).unwrap();
+        assert_eq!(u32::from_be_bytes(packet[..4].try_into().unwrap()), 3);
+        assert_eq!(u32::from_be_bytes(packet[4..8].try_into().unwrap()), 1500);
+        assert_eq!(&packet[8..12], &[1, 0, 0, 0]);
+        assert_eq!(&packet[12..], &[1, 2, 3]);
+    }
+}

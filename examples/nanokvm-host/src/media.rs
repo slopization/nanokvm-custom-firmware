@@ -3,6 +3,7 @@ use moonlink_core::{MediaProvider, MediaSessionConfig, MediaSessionError, VideoC
 
 use crate::cli::AudioSettings;
 use crate::external::ExternalSession;
+use crate::session_arbiter::{SessionArbiter, SessionLease, SessionOwner};
 use crate::settings::SettingsStore;
 use crate::v4l2_provider::{V4l2Session, V4l2Settings};
 
@@ -12,20 +13,28 @@ pub enum HostMediaProvider {
         command: String,
         audio: AudioSettings,
         settings_store: SettingsStore,
+        arbiter: SessionArbiter,
     },
     V4l2 {
         settings: V4l2Settings,
         audio: AudioSettings,
         settings_store: SettingsStore,
+        arbiter: SessionArbiter,
     },
 }
 
 impl HostMediaProvider {
-    pub fn command(command: String, audio: AudioSettings, settings_store: SettingsStore) -> Self {
+    pub fn command(
+        command: String,
+        audio: AudioSettings,
+        settings_store: SettingsStore,
+        arbiter: SessionArbiter,
+    ) -> Self {
         Self::Command {
             command,
             audio,
             settings_store,
+            arbiter,
         }
     }
 
@@ -33,18 +42,26 @@ impl HostMediaProvider {
         settings: V4l2Settings,
         audio: AudioSettings,
         settings_store: SettingsStore,
+        arbiter: SessionArbiter,
     ) -> Self {
         Self::V4l2 {
             settings,
             audio,
             settings_store,
+            arbiter,
         }
     }
 }
 
 pub enum HostMediaSession {
-    Command(ExternalSession),
-    V4l2(V4l2Session),
+    Command {
+        session: ExternalSession,
+        lease: Option<SessionLease>,
+    },
+    V4l2 {
+        session: V4l2Session,
+        lease: Option<SessionLease>,
+    },
 }
 
 #[async_trait]
@@ -56,23 +73,34 @@ impl MediaProvider for HostMediaProvider {
         config: MediaSessionConfig,
     ) -> Result<Self::Session, MediaSessionError> {
         println!("starting media session: {config:?}");
+        let arbiter = match self {
+            Self::Command { arbiter, .. } | Self::V4l2 { arbiter, .. } => arbiter,
+        };
+        let lease = arbiter.acquire(SessionOwner::Moonlight).map_err(|owner| {
+            MediaSessionError::Provider(format!("capture is already owned by {owner:?}"))
+        })?;
         match self {
             Self::Command {
                 command,
                 audio,
                 settings_store,
+                ..
             } => {
                 let current = settings_store.get().await;
                 let mut audio = audio.clone();
                 current.apply_audio(&mut audio);
                 ExternalSession::start(command, current.codec, audio, config)
                     .await
-                    .map(HostMediaSession::Command)
+                    .map(|session| HostMediaSession::Command {
+                        session,
+                        lease: Some(lease),
+                    })
             }
             Self::V4l2 {
                 settings,
                 audio,
                 settings_store,
+                ..
             } => {
                 let current = settings_store.get().await;
                 let mut settings = settings.clone();
@@ -81,7 +109,10 @@ impl MediaProvider for HostMediaProvider {
                 current.apply_audio(&mut audio);
                 V4l2Session::start(settings, audio, config)
                     .await
-                    .map(HostMediaSession::V4l2)
+                    .map(|session| HostMediaSession::V4l2 {
+                        session,
+                        lease: Some(lease),
+                    })
             }
         }
     }
@@ -91,22 +122,26 @@ impl MediaProvider for HostMediaProvider {
 impl moonlink_core::MediaSession for HostMediaSession {
     async fn next_video(&mut self) -> Result<Option<moonlink_core::VideoFrame>, MediaSessionError> {
         match self {
-            Self::Command(session) => session.next_video().await,
-            Self::V4l2(session) => session.next_video().await,
+            Self::Command { session, .. } => session.next_video().await,
+            Self::V4l2 { session, .. } => session.next_video().await,
         }
     }
 
     async fn stop(&mut self) -> Result<(), MediaSessionError> {
+        let result = match self {
+            Self::Command { session, .. } => session.stop().await,
+            Self::V4l2 { session, .. } => session.stop().await,
+        };
         match self {
-            Self::Command(session) => session.stop().await,
-            Self::V4l2(session) => session.stop().await,
+            Self::Command { lease, .. } | Self::V4l2 { lease, .. } => drop(lease.take()),
         }
+        result
     }
 
     fn take_audio(&mut self) -> Option<Box<dyn moonlink_core::AudioSession>> {
         match self {
-            Self::Command(session) => session.take_audio(),
-            Self::V4l2(session) => session.take_audio(),
+            Self::Command { session, .. } => session.take_audio(),
+            Self::V4l2 { session, .. } => session.take_audio(),
         }
     }
 
@@ -115,8 +150,8 @@ impl moonlink_core::MediaSession for HostMediaSession {
         message: VideoControlMessage,
     ) -> Result<(), MediaSessionError> {
         match self {
-            Self::Command(session) => session.handle_video_control(message).await,
-            Self::V4l2(session) => session.handle_video_control(message).await,
+            Self::Command { session, .. } => session.handle_video_control(message).await,
+            Self::V4l2 { session, .. } => session.handle_video_control(message).await,
         }
     }
 }

@@ -10,6 +10,7 @@ mod hid;
 mod hid_report;
 mod media;
 mod pairing_manager;
+mod session_arbiter;
 mod settings;
 mod usb_status;
 mod v4l2_provider;
@@ -24,6 +25,7 @@ use crate::gadget::{GadgetConfig, setup_usb_gadget};
 use crate::hid::UsbGadgetInputSink;
 use crate::media::HostMediaProvider;
 use crate::pairing_manager::PairingManager;
+use crate::session_arbiter::SessionArbiter;
 use crate::settings::{MoonlinkSettings, SettingsStore};
 use crate::usb_status::{monitor_usb_attachment, primary_ipv4, udc_state_path};
 use crate::web::serve_web;
@@ -52,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_kind = args.source_kind()?;
     let audio = args.audio_settings();
     let runtime_config = running_settings.runtime_config()?;
+    let arbiter = SessionArbiter::default();
 
     let config = ServerConfig::new(
         args.name.clone(),
@@ -72,12 +75,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PairingPin::static_pin)
         .unwrap_or_else(|| PairingPin::provider(pairing_manager.clone()));
 
+    let web_v4l2 = match &source_kind {
+        SourceKind::V4l2(settings) => Some(settings.clone()),
+        SourceKind::Command(_) => None,
+    };
     let provider = match source_kind {
         SourceKind::Command(command) => {
-            HostMediaProvider::command(command, audio, settings_store.clone())
+            HostMediaProvider::command(command, audio, settings_store.clone(), arbiter.clone())
         }
         SourceKind::V4l2(settings) => {
-            HostMediaProvider::v4l2(settings, audio, settings_store.clone())
+            HostMediaProvider::v4l2(settings, audio, settings_store.clone(), arbiter.clone())
         }
     };
 
@@ -119,6 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pairing_manager,
         pairing_store.clone(),
         handle.controller(),
+        arbiter,
+        web_v4l2,
     ));
 
     println!(

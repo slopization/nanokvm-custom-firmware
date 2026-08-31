@@ -1,0 +1,10 @@
+@yume-chan/libde265 1.0.0
+
+Source: https://github.com/yume-chan/libde265
+Commit: b5eb3b64f00aa1b0134645cc78703b8e773633d5
+Package tarball SHA-256: c696bdfea645469a2fbe7fdb9f261f445ede51efe84537886e1d9631b3e16cae
+License: LGPL-3.0-only
+
+The unmodified libde265.mjs and libde265.wasm files are distributed from the
+published @yume-chan/libde265 1.0.0 npm package. The corresponding source and
+build instructions are available at the source URL and commit above.

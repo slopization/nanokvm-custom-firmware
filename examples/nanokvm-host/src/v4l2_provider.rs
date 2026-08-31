@@ -57,6 +57,13 @@ pub struct V4l2Session {
     audio: Option<AudioGenerator>,
 }
 
+#[derive(Debug)]
+pub struct EncodedFrame {
+    pub bytes: Vec<u8>,
+    pub keyframe: bool,
+    pub timestamp_90khz: u32,
+}
+
 impl V4l2Session {
     pub async fn start(
         settings: V4l2Settings,
@@ -176,7 +183,7 @@ impl V4l2Session {
         })
     }
 
-    async fn encode_frame(&mut self) -> Result<Option<(Vec<u8>, bool)>, MediaSessionError> {
+    pub async fn next_encoded(&mut self) -> Result<Option<EncodedFrame>, MediaSessionError> {
         if !self.logged_waiting_for_frame {
             eprintln!("waiting for first captured V4L2 frame");
             self.logged_waiting_for_frame = true;
@@ -291,7 +298,13 @@ impl V4l2Session {
             .await
             .map_err(provider_error)?;
 
-        Ok(Some((frame, marker)))
+        let timestamp_90khz = self.timestamp_90khz;
+        self.timestamp_90khz = self.timestamp_90khz.wrapping_add(self.timestamp_step);
+        Ok(Some(EncodedFrame {
+            bytes: frame,
+            keyframe: marker,
+            timestamp_90khz,
+        }))
     }
 
     async fn drop_capture_frame(&mut self) -> Result<(), MediaSessionError> {
@@ -310,15 +323,15 @@ impl V4l2Session {
 #[async_trait]
 impl MediaSession for V4l2Session {
     async fn next_video(&mut self) -> Result<Option<VideoFrame>, MediaSessionError> {
-        let (bytes, marker) = loop {
-            if let Some(frame) = self.encode_frame().await? {
+        let frame = loop {
+            if let Some(frame) = self.next_encoded().await? {
                 break frame;
             }
         };
-        let timestamp = self.timestamp_90khz;
-        self.timestamp_90khz = self.timestamp_90khz.wrapping_add(self.timestamp_step);
         Ok(Some(VideoFrame::AccessUnit(create_access_unit(
-            bytes, timestamp, marker,
+            frame.bytes,
+            frame.timestamp_90khz,
+            frame.keyframe,
         ))))
     }
 
