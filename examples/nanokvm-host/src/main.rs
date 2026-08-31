@@ -1,6 +1,7 @@
 mod alsa_pcm;
 mod audio;
 mod auth;
+mod browser_stream;
 mod cli;
 mod display;
 mod external;
