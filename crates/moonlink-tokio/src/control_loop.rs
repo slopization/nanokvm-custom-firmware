@@ -5,7 +5,8 @@ use moonlink_protocol::{
     ENCRYPTED_CONTROL_PACKET_TYPE, START_ACK_PACKET_TYPE, is_input_data_packet_type,
     is_invalidate_reference_packet_type, is_request_idr_packet_type, parse_input_packet,
 };
-use openssl::symm::{Cipher, Crypter, Mode};
+use openssl::cipher::Cipher;
+use openssl::cipher_ctx::CipherCtx;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_enet::{
     Event as EnetEvent, Host as EnetHost, Packet as EnetPacket, PacketMode as EnetPacketMode,
@@ -226,8 +227,12 @@ fn decrypt_control_packet(
     let sequence = u32::from_le_bytes(data[4..8].try_into().expect("slice length"));
     let tag = &data[8..8 + AES_GCM_TAG_LEN];
     let ciphertext = &data[8 + AES_GCM_TAG_LEN..];
+    let key = crypto.material.key;
     let plaintext = match decrypt_aes_gcm(
-        &crypto.material.key,
+        &mut crypto.decrypt_context,
+        &mut crypto.decrypt_context_mode,
+        ControlEncryptionMode::New,
+        &key,
         &control_v2_iv(sequence, b'C', b'C'),
         tag,
         ciphertext,
@@ -237,7 +242,10 @@ fn decrypt_control_packet(
             plaintext
         }
         Err(new_err) => match decrypt_aes_gcm(
-            &crypto.material.key,
+            &mut crypto.decrypt_context,
+            &mut crypto.decrypt_context_mode,
+            ControlEncryptionMode::Old,
+            &key,
             &control_v1_iv(sequence),
             tag,
             ciphertext,
@@ -307,16 +315,23 @@ fn encrypt_control_packet(
     let payload_len = u16::try_from(payload.len())
         .map_err(|_| ServerError::InvalidConfig("control payload is too large".to_owned()))?;
     let sequence = crypto.next_host_sequence;
-    crypto.next_host_sequence = crypto.next_host_sequence.wrapping_add(1);
+    crypto.next_host_sequence = crypto.next_host_sequence.checked_add(1).ok_or_else(|| {
+        ServerError::InvalidConfig("control encryption IV space exhausted".to_owned())
+    })?;
 
     let mut plaintext = Vec::with_capacity(4 + payload.len());
     plaintext.extend_from_slice(&packet_type.to_le_bytes());
     plaintext.extend_from_slice(&payload_len.to_le_bytes());
     plaintext.extend_from_slice(payload);
 
+    let key = crypto.material.key;
+    let mode = crypto.mode;
     let (tag, ciphertext) = encrypt_aes_gcm(
-        &crypto.material.key,
-        &control_iv(sequence, b'H', b'C', crypto.mode),
+        &mut crypto.encrypt_context,
+        &mut crypto.encrypt_context_mode,
+        mode,
+        &key,
+        &control_iv(sequence, b'H', b'C', mode),
         &plaintext,
     )?;
     let length = u16::try_from(4 + AES_GCM_TAG_LEN + ciphertext.len()).map_err(|_| {
@@ -353,49 +368,89 @@ fn control_v1_iv(sequence: u32) -> [u8; 16] {
 }
 
 fn decrypt_aes_gcm(
+    context: &mut Option<CipherCtx>,
+    context_mode: &mut Option<ControlEncryptionMode>,
+    mode: ControlEncryptionMode,
     key: &[u8; 16],
     iv: &[u8],
     tag: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, ServerError> {
-    let mut crypter = Crypter::new(Cipher::aes_128_gcm(), Mode::Decrypt, key, Some(iv))
-        .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
-    crypter.pad(false);
-    crypter
+    prepare_control_context(context, context_mode, mode, key, iv, false)?;
+    let context = context
+        .as_mut()
+        .expect("prepared control decryption context");
+    context
         .set_tag(tag)
         .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
-    let mut plaintext = vec![0_u8; ciphertext.len() + Cipher::aes_128_gcm().block_size()];
-    let mut count = crypter
-        .update(ciphertext, &mut plaintext)
+    let mut plaintext = vec![0_u8; ciphertext.len()];
+    let mut count = context
+        .cipher_update(ciphertext, Some(&mut plaintext))
         .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
-    count += crypter
-        .finalize(&mut plaintext[count..])
+    count += context
+        .cipher_final(&mut plaintext[count..])
         .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
     plaintext.truncate(count);
     Ok(plaintext)
 }
 
 fn encrypt_aes_gcm(
+    context: &mut Option<CipherCtx>,
+    context_mode: &mut Option<ControlEncryptionMode>,
+    mode: ControlEncryptionMode,
     key: &[u8; 16],
     iv: &[u8],
     plaintext: &[u8],
 ) -> Result<([u8; AES_GCM_TAG_LEN], Vec<u8>), ServerError> {
-    let mut crypter = Crypter::new(Cipher::aes_128_gcm(), Mode::Encrypt, key, Some(iv))
+    prepare_control_context(context, context_mode, mode, key, iv, true)?;
+    let context = context
+        .as_mut()
+        .expect("prepared control encryption context");
+    let mut ciphertext = vec![0_u8; plaintext.len()];
+    let mut count = context
+        .cipher_update(plaintext, Some(&mut ciphertext))
         .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
-    crypter.pad(false);
-    let mut ciphertext = vec![0_u8; plaintext.len() + Cipher::aes_128_gcm().block_size()];
-    let mut count = crypter
-        .update(plaintext, &mut ciphertext)
-        .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
-    count += crypter
-        .finalize(&mut ciphertext[count..])
+    count += context
+        .cipher_final(&mut ciphertext[count..])
         .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
     ciphertext.truncate(count);
     let mut tag = [0_u8; AES_GCM_TAG_LEN];
-    crypter
-        .get_tag(&mut tag)
+    context
+        .tag(&mut tag)
         .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
     Ok((tag, ciphertext))
+}
+
+fn prepare_control_context(
+    context: &mut Option<CipherCtx>,
+    context_mode: &mut Option<ControlEncryptionMode>,
+    mode: ControlEncryptionMode,
+    key: &[u8; 16],
+    iv: &[u8],
+    encrypt: bool,
+) -> Result<(), ServerError> {
+    if context_mode.as_ref() != Some(&mode) {
+        let mut new_context =
+            CipherCtx::new().map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
+        if encrypt {
+            new_context.encrypt_init(Some(Cipher::aes_128_gcm()), Some(key), Some(iv))
+        } else {
+            new_context.decrypt_init(Some(Cipher::aes_128_gcm()), Some(key), Some(iv))
+        }
+        .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
+        new_context.set_padding(false);
+        *context = Some(new_context);
+        *context_mode = Some(mode);
+        return Ok(());
+    }
+
+    let context = context.as_mut().expect("control cipher mode has a context");
+    if encrypt {
+        context.encrypt_init(None, None, Some(iv))
+    } else {
+        context.decrypt_init(None, None, Some(iv))
+    }
+    .map_err(|err| ServerError::InvalidConfig(err.to_string()))
 }
 
 fn parse_video_control_message(data: &[u8]) -> Option<VideoControlMessage> {
@@ -460,5 +515,39 @@ mod tests {
                 last_frame: 11,
             })
         );
+    }
+
+    #[test]
+    fn reuses_control_gcm_context_with_new_ivs() {
+        let key = [0x5a; 16];
+        let mut encrypt_context = None;
+        let mut encrypt_mode = None;
+        let mut decrypt_context = None;
+        let mut decrypt_mode = None;
+
+        for sequence in 1..=2 {
+            let iv = control_v2_iv(sequence, b'C', b'C');
+            let plaintext = format!("control-{sequence}").into_bytes();
+            let (tag, ciphertext) = encrypt_aes_gcm(
+                &mut encrypt_context,
+                &mut encrypt_mode,
+                ControlEncryptionMode::New,
+                &key,
+                &iv,
+                &plaintext,
+            )
+            .unwrap();
+            let decrypted = decrypt_aes_gcm(
+                &mut decrypt_context,
+                &mut decrypt_mode,
+                ControlEncryptionMode::New,
+                &key,
+                &iv,
+                &tag,
+                &ciphertext,
+            )
+            .unwrap();
+            assert_eq!(decrypted, plaintext);
+        }
     }
 }

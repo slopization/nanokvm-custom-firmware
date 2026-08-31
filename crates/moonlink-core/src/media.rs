@@ -36,6 +36,7 @@ pub struct MediaSessionConfig {
     pub video_packet_size: usize,
     pub video_fec_percentage: u8,
     pub video_min_parity_shards: usize,
+    pub video_encrypted: bool,
     pub audio_encrypted: bool,
     pub audio_packet_duration_ms: u32,
 }
@@ -64,6 +65,7 @@ impl Default for MediaSessionConfig {
             video_packet_size: DEFAULT_VIDEO_PACKET_SIZE,
             video_fec_percentage: DEFAULT_VIDEO_FEC_PERCENTAGE,
             video_min_parity_shards: DEFAULT_VIDEO_MIN_PARITY_SHARDS,
+            video_encrypted: false,
             audio_encrypted: false,
             audio_packet_duration_ms: 5,
         }

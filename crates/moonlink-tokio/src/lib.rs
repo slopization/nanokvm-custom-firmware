@@ -156,6 +156,7 @@ mod tests {
                 name: "after".to_owned(),
                 capabilities: CodecCapabilities::video_only(vec![VideoCodec::H264]),
                 video_stream: VideoStream::default(),
+                encryption_mode: moonlink_core::EncryptionMode::Opportunistic,
             });
 
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();

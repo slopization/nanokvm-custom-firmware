@@ -2,11 +2,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use moonlink_core::{
-    MediaProvider, MediaSessionConfig, MediaSessionId, ServerError, ServerRuntimeConfig, VideoMode,
+    EncryptionMode, MediaProvider, MediaSessionConfig, MediaSessionId, ServerError,
+    ServerRuntimeConfig, VideoMode,
 };
 use moonlink_protocol::{
-    AudioCodec, DEFAULT_VIDEO_PACKET_SIZE, FEATURE_FLAG_AUDIO_ENCRYPTION, RtspResponse, VideoCodec,
-    parse_rtsp_request,
+    AudioCodec, DEFAULT_VIDEO_PACKET_SIZE, FEATURE_FLAG_AUDIO_ENCRYPTION, RtspResponse,
+    STREAM_ENCRYPTION_ALL, STREAM_ENCRYPTION_AUDIO, STREAM_ENCRYPTION_CONTROL_V2,
+    STREAM_ENCRYPTION_MEDIA, STREAM_ENCRYPTION_VIDEO, VideoCodec, parse_rtsp_request,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -159,10 +161,23 @@ where
             }
             "PLAY" => {
                 if !request.target.contains("audio") {
-                    let (session_shutdown_tx, session_shutdown_rx) = watch::channel(false);
-                    let session_config = {
-                        let state = session_state.lock().await;
-                        MediaSessionConfig {
+                    let state = session_state.lock().await.clone();
+                    let media_encryption = negotiated_media_encryption(
+                        runtime_config.encryption_mode,
+                        state.encryption_flags,
+                    );
+                    if media_encryption.is_none() {
+                        response.status = 403;
+                        response.reason = "Forbidden".to_owned();
+                        eprintln!(
+                            "rejecting client without mandatory media encryption: enabled={:#x}",
+                            state.encryption_flags
+                        );
+                    } else {
+                        let (session_shutdown_tx, session_shutdown_rx) = watch::channel(false);
+                        let media_encryption =
+                            media_encryption.expect("mandatory media encryption was validated");
+                        let session_config = MediaSessionConfig {
                             session_id: MediaSessionId::new(),
                             app_id: 1,
                             // Moonlight announces its UI-selected mode even when a fixed-capture
@@ -179,50 +194,51 @@ where
                                 .unwrap_or(DEFAULT_VIDEO_PACKET_SIZE),
                             video_fec_percentage: runtime_config.video_stream.fec_percentage,
                             video_min_parity_shards: runtime_config.video_stream.min_parity_shards,
-                            audio_encrypted: state.audio_encrypted,
+                            video_encrypted: media_encryption & STREAM_ENCRYPTION_VIDEO != 0,
+                            audio_encrypted: media_encryption & STREAM_ENCRYPTION_AUDIO != 0,
                             audio_packet_duration_ms: state.audio_packet_duration_ms.unwrap_or(5),
-                        }
-                    };
-                    let mut media_sessions = media_sessions.lock().await;
-                    media_sessions.stop().await;
-                    let provider = Arc::clone(&media_provider);
-                    eprintln!("rtsp play: starting media session {session_config:?}");
-                    let socket = Arc::clone(&video_socket);
-                    let audio_socket = Arc::clone(&audio_socket);
-                    let video_peer = Arc::clone(&video_peer);
-                    let audio_peer = Arc::clone(&audio_peer);
-                    let video_control = video_control.subscribe();
-                    let stream_stop = stream_stop.subscribe();
-                    let mut server_shutdown = shutdown.clone();
-                    let media_shutdown_tx = session_shutdown_tx.clone();
-                    let task = tokio::spawn(async move {
-                        let media = stream_media(
-                            provider.as_ref(),
-                            session_config,
-                            socket,
-                            audio_socket,
-                            video_peer,
-                            audio_peer,
-                            video_control,
-                            stream_stop,
-                            control_crypto,
-                            session_shutdown_rx,
-                        );
-                        tokio::pin!(media);
-                        let result = tokio::select! {
-                            result = &mut media => result,
-                            changed = server_shutdown.changed() => {
-                                if changed.is_ok() && *server_shutdown.borrow() {
-                                    let _ = media_shutdown_tx.send(true);
-                                }
-                                media.await
-                            }
                         };
-                        if let Err(err) = result {
-                            eprintln!("media stream stopped with error: {err}");
-                        }
-                    });
-                    media_sessions.start(session_shutdown_tx, task);
+                        let mut media_sessions = media_sessions.lock().await;
+                        media_sessions.stop().await;
+                        let provider = Arc::clone(&media_provider);
+                        eprintln!("rtsp play: starting media session {session_config:?}");
+                        let socket = Arc::clone(&video_socket);
+                        let audio_socket = Arc::clone(&audio_socket);
+                        let video_peer = Arc::clone(&video_peer);
+                        let audio_peer = Arc::clone(&audio_peer);
+                        let video_control = video_control.subscribe();
+                        let stream_stop = stream_stop.subscribe();
+                        let mut server_shutdown = shutdown.clone();
+                        let media_shutdown_tx = session_shutdown_tx.clone();
+                        let task = tokio::spawn(async move {
+                            let media = stream_media(
+                                provider.as_ref(),
+                                session_config,
+                                socket,
+                                audio_socket,
+                                video_peer,
+                                audio_peer,
+                                video_control,
+                                stream_stop,
+                                control_crypto,
+                                session_shutdown_rx,
+                            );
+                            tokio::pin!(media);
+                            let result = tokio::select! {
+                                result = &mut media => result,
+                                changed = server_shutdown.changed() => {
+                                    if changed.is_ok() && *server_shutdown.borrow() {
+                                        let _ = media_shutdown_tx.send(true);
+                                    }
+                                    media.await
+                                }
+                            };
+                            if let Err(err) = result {
+                                eprintln!("media stream stopped with error: {err}");
+                            }
+                        });
+                        media_sessions.start(session_shutdown_tx, task);
+                    }
                 }
                 response
                     .headers
@@ -256,11 +272,16 @@ async fn clear_stream_peers(video_peer: &StreamPeer, audio_peer: &StreamPeer) {
 struct RtspSessionState {
     video_codec: Option<VideoCodec>,
     video_packet_size: Option<usize>,
-    audio_encrypted: bool,
+    encryption_flags: u32,
     audio_packet_duration_ms: Option<u32>,
 }
 
 fn describe_sdp(config: &ServerRuntimeConfig) -> String {
+    let (encryption_supported, encryption_requested) = match config.encryption_mode {
+        EncryptionMode::Never => (STREAM_ENCRYPTION_CONTROL_V2, STREAM_ENCRYPTION_CONTROL_V2),
+        EncryptionMode::Opportunistic => (STREAM_ENCRYPTION_ALL, STREAM_ENCRYPTION_CONTROL_V2),
+        EncryptionMode::Mandatory => (STREAM_ENCRYPTION_ALL, STREAM_ENCRYPTION_ALL),
+    };
     let video_attributes = if config.capabilities.video.contains(&VideoCodec::Hevc) {
         "a=rtpmap:96 H264/90000\r\n\
          a=fmtp:96 packetization-mode=1; sprop-parameter-sets=AAAAAU\r\n"
@@ -275,8 +296,8 @@ fn describe_sdp(config: &ServerRuntimeConfig) -> String {
          t=0 0\r\n\
          m=video 47998  \r\n\
          {video_attributes}\
-         a=x-ss-general.encryptionSupported:1\r\n\
-         a=x-ss-general.encryptionRequested:0\r\n\
+         a=x-ss-general.encryptionSupported:{encryption_supported}\r\n\
+         a=x-ss-general.encryptionRequested:{encryption_requested}\r\n\
          a=x-nv-video[0].packetSize:{packet_size}\r\n\
          a=x-nv-video[0].clientViewportWd:{width}\r\n\
          a=x-nv-video[0].clientViewportHt:{height}\r\n\
@@ -294,6 +315,19 @@ fn describe_sdp(config: &ServerRuntimeConfig) -> String {
         fec_percentage = config.video_stream.fec_percentage,
         min_parity_shards = config.video_stream.min_parity_shards
     )
+}
+
+fn negotiated_media_encryption(mode: EncryptionMode, enabled: u32) -> Option<u32> {
+    match mode {
+        EncryptionMode::Never => Some(0),
+        EncryptionMode::Opportunistic => Some(enabled & STREAM_ENCRYPTION_MEDIA),
+        EncryptionMode::Mandatory
+            if enabled & STREAM_ENCRYPTION_MEDIA == STREAM_ENCRYPTION_MEDIA =>
+        {
+            Some(STREAM_ENCRYPTION_MEDIA)
+        }
+        EncryptionMode::Mandatory => None,
+    }
 }
 
 fn detect_stream_kind(target: &str) -> Option<&'static str> {
@@ -331,6 +365,7 @@ fn parse_client_port(transport: &str) -> Option<u16> {
 }
 
 fn apply_announce(state: &mut RtspSessionState, body: &[u8]) {
+    state.encryption_flags = 0;
     let body = String::from_utf8_lossy(body);
     for line in body.lines() {
         if let Some(value) = line.strip_prefix("a=x-nv-vqos[0].bitStreamFormat:") {
@@ -342,8 +377,14 @@ fn apply_announce(state: &mut RtspSessionState, body: &[u8]) {
         } else if let Some(value) = line.strip_prefix("a=x-nv-video[0].packetSize:") {
             state.video_packet_size = parse_video_packet_size(value.trim());
         } else if let Some(value) = line.strip_prefix("a=x-nv-general.featureFlags:") {
-            state.audio_encrypted = parse_feature_flags(value)
-                .is_some_and(|flags| flags & FEATURE_FLAG_AUDIO_ENCRYPTION != 0);
+            if parse_feature_flags(value)
+                .is_some_and(|flags| flags & FEATURE_FLAG_AUDIO_ENCRYPTION != 0)
+            {
+                state.encryption_flags |= STREAM_ENCRYPTION_AUDIO;
+            }
+        } else if let Some(value) = line.strip_prefix("a=x-ss-general.encryptionEnabled:") {
+            state.encryption_flags |=
+                parse_feature_flags(value).unwrap_or(0) & STREAM_ENCRYPTION_ALL;
         } else if let Some(value) = line.strip_prefix("a=x-nv-aqos.packetDuration:") {
             state.audio_packet_duration_ms = value
                 .trim()
@@ -389,7 +430,9 @@ mod tests {
     fn parses_audio_encryption_feature_flag() {
         let mut state = RtspSessionState::default();
         apply_announce(&mut state, b"a=x-nv-general.featureFlags:160\r\n");
-        assert!(state.audio_encrypted);
+        assert_ne!(state.encryption_flags & STREAM_ENCRYPTION_AUDIO, 0);
+        apply_announce(&mut state, b"a=x-nv-general.featureFlags:128\r\n");
+        assert_eq!(state.encryption_flags, 0);
     }
 
     #[test]
@@ -397,5 +440,48 @@ mod tests {
         let mut state = RtspSessionState::default();
         apply_announce(&mut state, b"a=x-nv-aqos.packetDuration:5\r\n");
         assert_eq!(state.audio_packet_duration_ms, Some(5));
+    }
+
+    #[test]
+    fn advertises_encryption_policy() {
+        let mut config = ServerRuntimeConfig {
+            name: "test".to_owned(),
+            capabilities: moonlink_protocol::CodecCapabilities::video_only(vec![VideoCodec::H264]),
+            video_stream: moonlink_core::VideoStream::default(),
+            encryption_mode: EncryptionMode::Never,
+        };
+        let never = describe_sdp(&config);
+        assert!(never.contains("encryptionSupported:1\r\n"));
+        assert!(never.contains("encryptionRequested:1\r\n"));
+
+        config.encryption_mode = EncryptionMode::Opportunistic;
+        let opportunistic = describe_sdp(&config);
+        assert!(opportunistic.contains("encryptionSupported:7\r\n"));
+        assert!(opportunistic.contains("encryptionRequested:1\r\n"));
+
+        config.encryption_mode = EncryptionMode::Mandatory;
+        let mandatory = describe_sdp(&config);
+        assert!(mandatory.contains("encryptionSupported:7\r\n"));
+        assert!(mandatory.contains("encryptionRequested:7\r\n"));
+    }
+
+    #[test]
+    fn enforces_media_encryption_policy() {
+        assert_eq!(
+            negotiated_media_encryption(EncryptionMode::Never, STREAM_ENCRYPTION_MEDIA),
+            Some(0)
+        );
+        assert_eq!(
+            negotiated_media_encryption(EncryptionMode::Opportunistic, STREAM_ENCRYPTION_VIDEO),
+            Some(STREAM_ENCRYPTION_VIDEO)
+        );
+        assert_eq!(
+            negotiated_media_encryption(EncryptionMode::Mandatory, STREAM_ENCRYPTION_VIDEO),
+            None
+        );
+        assert_eq!(
+            negotiated_media_encryption(EncryptionMode::Mandatory, STREAM_ENCRYPTION_MEDIA),
+            Some(STREAM_ENCRYPTION_MEDIA)
+        );
     }
 }

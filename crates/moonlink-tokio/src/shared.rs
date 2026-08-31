@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use openssl::cipher_ctx::CipherCtx;
 use tokio::sync::Mutex;
 
 use crate::pairing::PairingSession;
@@ -37,11 +38,14 @@ impl RiKeyMaterial {
     }
 }
 
-#[derive(Debug, Clone)]
 pub(crate) struct ControlCryptoState {
     pub(crate) material: RiKeyMaterial,
     pub(crate) next_host_sequence: u32,
     pub(crate) mode: ControlEncryptionMode,
+    pub(crate) encrypt_context: Option<CipherCtx>,
+    pub(crate) encrypt_context_mode: Option<ControlEncryptionMode>,
+    pub(crate) decrypt_context: Option<CipherCtx>,
+    pub(crate) decrypt_context_mode: Option<ControlEncryptionMode>,
 }
 
 impl ControlCryptoState {
@@ -50,6 +54,10 @@ impl ControlCryptoState {
             material,
             next_host_sequence: 0,
             mode: ControlEncryptionMode::New,
+            encrypt_context: None,
+            encrypt_context_mode: None,
+            decrypt_context: None,
+            decrypt_context_mode: None,
         }
     }
 }
@@ -58,17 +66,6 @@ impl ControlCryptoState {
 pub(crate) enum ControlEncryptionMode {
     New,
     Old,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct AudioCryptoState {
-    pub(crate) material: RiKeyMaterial,
-}
-
-impl From<RiKeyMaterial> for AudioCryptoState {
-    fn from(material: RiKeyMaterial) -> Self {
-        Self { material }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

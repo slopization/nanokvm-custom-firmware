@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
+use moonlink_core::EncryptionMode;
 use moonlink_v4l2::FourCc;
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +79,8 @@ pub struct Args {
     pub video_fec_percentage: u8,
     #[arg(long, default_value_t = 2)]
     pub video_min_parity_shards: usize,
+    #[arg(long, value_enum, default_value = "opportunistic")]
+    pub encryption_mode: StreamEncryptionMode,
     #[arg(long)]
     pub hevc_loop_filter: Option<i32>,
     #[arg(long)]
@@ -173,6 +176,25 @@ pub enum SourceKind {
 pub enum StreamCodec {
     Hevc,
     H264,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamEncryptionMode {
+    Never,
+    #[default]
+    Opportunistic,
+    Mandatory,
+}
+
+impl From<StreamEncryptionMode> for EncryptionMode {
+    fn from(mode: StreamEncryptionMode) -> Self {
+        match mode {
+            StreamEncryptionMode::Never => Self::Never,
+            StreamEncryptionMode::Opportunistic => Self::Opportunistic,
+            StreamEncryptionMode::Mandatory => Self::Mandatory,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]

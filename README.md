@@ -8,10 +8,10 @@ captures target audio through UAC2.
 
 > [!WARNING]
 > This firmware is experimental, has not received a security audit, and may be
-> insecure. The Moonlight video stream is sent over UDP without encryption.
+> insecure. Moonlight media encryption is configurable and opportunistic by
+> default; select mandatory encryption when plaintext fallback is unacceptable.
 > The management UI currently uses plaintext HTTP and handles the system root
-> password. Use it only on a trusted, isolated network. Do not expose this host
-> or its ports to the Internet.
+> password. Do not expose it to an untrusted network.
 
 ## Documentation
 

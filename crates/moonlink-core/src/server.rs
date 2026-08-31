@@ -23,6 +23,7 @@ pub struct ServerConfig {
     pub pairing_pin: PairingPin,
     pub app_version: String,
     pub video_stream: VideoStream,
+    pub encryption_mode: EncryptionMode,
 }
 
 impl ServerConfig {
@@ -48,6 +49,7 @@ impl ServerConfig {
             pairing_pin: PairingPin::static_pin("0000"),
             app_version: "9.1.0.0".to_owned(),
             video_stream: VideoStream::default(),
+            encryption_mode: EncryptionMode::default(),
         }
     }
 
@@ -70,6 +72,11 @@ impl ServerConfig {
 
     pub fn with_video_stream(mut self, video_stream: VideoStream) -> Self {
         self.video_stream = video_stream;
+        self
+    }
+
+    pub fn with_encryption_mode(mut self, encryption_mode: EncryptionMode) -> Self {
+        self.encryption_mode = encryption_mode;
         self
     }
 }
@@ -98,6 +105,14 @@ pub enum BackpressurePolicy {
     DropNewest,
     DropOldestMotion,
     Disconnect,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum EncryptionMode {
+    Never,
+    #[default]
+    Opportunistic,
+    Mandatory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

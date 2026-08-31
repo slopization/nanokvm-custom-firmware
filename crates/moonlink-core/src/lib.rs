@@ -17,5 +17,5 @@ pub use pairing::{
     ServerIdentity, TrustedClient, client_id_from_certificate,
 };
 pub use pairing_pin::{PairingPin, PairingPinProvider, PairingRequest};
-pub use server::{App, BackpressurePolicy, ServerConfig, ServerError, VideoStream};
+pub use server::{App, BackpressurePolicy, EncryptionMode, ServerConfig, ServerError, VideoStream};
 pub use server_runtime_config::ServerRuntimeConfig;

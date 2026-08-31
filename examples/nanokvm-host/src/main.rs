@@ -62,7 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .with_https_bind(args.bind_https)
     .with_stream_ports(args.bind_video, args.bind_audio, args.bind_control)
-    .with_video_stream(runtime_config.video_stream);
+    .with_video_stream(runtime_config.video_stream)
+    .with_encryption_mode(runtime_config.encryption_mode);
 
     let mut config = config;
     config.pairing_pin = args

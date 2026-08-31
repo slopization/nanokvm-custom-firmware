@@ -9,7 +9,7 @@ use moonlink_protocol::{CodecCapabilities, VideoCodec};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::cli::{Args, AudioSettings, AudioSource, StreamCodec};
+use crate::cli::{Args, AudioSettings, AudioSource, StreamCodec, StreamEncryptionMode};
 use crate::v4l2_provider::V4l2Settings;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +27,8 @@ pub struct MoonlinkSettings {
     pub gop: u32,
     pub video_fec_percentage: u8,
     pub video_min_parity_shards: usize,
+    #[serde(default)]
+    pub encryption_mode: StreamEncryptionMode,
     pub hevc_loop_filter: Option<i32>,
     pub repeat_headers: bool,
     pub aud: bool,
@@ -56,6 +58,7 @@ impl MoonlinkSettings {
             gop: args.gop,
             video_fec_percentage: args.video_fec_percentage,
             video_min_parity_shards: args.video_min_parity_shards,
+            encryption_mode: args.encryption_mode,
             hevc_loop_filter: args.hevc_loop_filter,
             repeat_headers: !args.no_repeat_headers,
             aud: !args.no_aud,
@@ -76,6 +79,7 @@ impl MoonlinkSettings {
         args.gop = self.gop;
         args.video_fec_percentage = self.video_fec_percentage;
         args.video_min_parity_shards = self.video_min_parity_shards;
+        args.encryption_mode = self.encryption_mode;
         args.hevc_loop_filter = self.hevc_loop_filter;
         args.no_repeat_headers = !self.repeat_headers;
         args.no_aud = !self.aud;
@@ -122,6 +126,7 @@ impl MoonlinkSettings {
                 self.advertised_fps / self.frame_divider,
             )
             .with_fec(self.video_fec_percentage, self.video_min_parity_shards),
+            encryption_mode: self.encryption_mode.into(),
         })
     }
 
@@ -226,5 +231,19 @@ mod tests {
         let mut settings = MoonlinkSettings::from_args(&args);
         settings.frame_divider = 0;
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn defaults_missing_encryption_mode_to_opportunistic() {
+        let args = Args::parse_from(["nanokvm-host"]);
+        let settings = MoonlinkSettings::from_args(&args);
+        let mut json = serde_json::to_value(settings).unwrap();
+        json.as_object_mut().unwrap().remove("encryption_mode");
+
+        let migrated: MoonlinkSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            migrated.encryption_mode,
+            StreamEncryptionMode::Opportunistic
+        );
     }
 }

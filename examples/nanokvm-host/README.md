@@ -1,8 +1,8 @@
 # NanoKVM Test Host
 
 > [!WARNING]
-> This host is experimental. Video is not encrypted, and the management UI
-> uses plaintext HTTP. See [`SECURITY.md`](../../SECURITY.md).
+> This host is experimental. Stream encryption is configurable, but the
+> management UI uses plaintext HTTP. See [`SECURITY.md`](../../SECURITY.md).
 
 This example exposes a Moonlight/Sunshine-compatible host while leaving capture,
 DMA, and HEVC encoding selectable at the edge. The native path configures V4L2
@@ -76,6 +76,12 @@ restart. The UI authenticates with the system root password, and both normal
 password changes and OLED recovery-code changes update the root account through
 `chpasswd`.
 
+Stream encryption defaults to `opportunistic`: audio and video are encrypted
+when requested by a compatible Moonlight client. Select `Required` in the UI or
+use `--encryption-mode mandatory` to reject sessions that do not negotiate both
+encrypted media channels. `--encryption-mode never` disables media encryption;
+pairing and encrypted control traffic remain enabled.
+
 To pair a Moonlight client, start pairing on the client and open **Moonlight
 devices** in the web UI. Enter the four-digit PIN beside the pending device.
 Each trusted client is stored by its certificate fingerprint, so any number of
@@ -102,7 +108,8 @@ sudo ./target/release/nanokvm-host \
 Useful arguments include `--name`, `--pin`, `--bind-http`, `--bind-https`,
 `--bind-rtsp`, `--bind-video`, `--bind-audio`, `--bind-control`,
 `--buffer-count`, `--max-width`, `--max-height`, `--max-fps`,
-`--bitrate-kbps`, `--gop`, `--audio`, `--no-repeat-headers`, `--no-aud`,
+`--bitrate-kbps`, `--gop`, `--audio`, `--encryption-mode`,
+`--no-repeat-headers`, `--no-aud`,
 `--hid`, `--setup-usb-gadget`, `--udc`, and `--display-transform`.
 
 For Linux V4L2 smoke testing with fake devices:
