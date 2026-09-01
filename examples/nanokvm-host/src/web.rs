@@ -2,10 +2,10 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::extract::{Path, Request, State};
-use axum::http::header::{CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, SET_COOKIE};
+use axum::http::header::{CONTENT_TYPE, COOKIE, LOCATION};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -16,48 +16,25 @@ use crate::browser_stream::BrowserCapture;
 use crate::cli::AudioSettings;
 use crate::hid::UsbGadgetInputSink;
 use crate::pairing_manager::{PairingManager, PendingPairing};
-use crate::session_arbiter::{SessionArbiter, SessionOwner};
+use crate::session_arbiter::SessionArbiter;
 use crate::settings::{MoonlinkSettings, SettingsStore};
 use crate::v4l2_provider::V4l2Settings;
 use moonlink_core::PairingStore;
 use moonlink_tokio::{FilePairingStore, ServerController};
 
-const SESSION_COOKIE: &str = "moonlink_session";
-
 #[derive(Clone)]
 struct WebState {
     auth: AuthState,
     settings: SettingsStore,
-    ip_address: String,
     pairing_manager: PairingManager,
     pairing_store: FilePairingStore,
     server: ServerController,
-    arbiter: SessionArbiter,
     browser_capture: BrowserCapture,
-}
-
-#[derive(Serialize)]
-struct Status {
-    authenticated: bool,
-    password_configured: bool,
-    ip_address: String,
-    capture_owner: Option<SessionOwner>,
 }
 
 #[derive(Serialize)]
 struct Message {
     message: String,
-}
-
-#[derive(Deserialize)]
-struct PasswordLogin {
-    password: String,
-}
-
-#[derive(Deserialize)]
-struct PasswordRecovery {
-    otp: String,
-    new_password: String,
 }
 
 #[derive(Deserialize)]
@@ -87,7 +64,6 @@ pub async fn serve_web(
     bind: SocketAddr,
     auth: AuthState,
     settings: SettingsStore,
-    ip_address: String,
     pairing_manager: PairingManager,
     pairing_store: FilePairingStore,
     server: ServerController,
@@ -105,15 +81,12 @@ pub async fn serve_web(
     let state = WebState {
         auth: auth.clone(),
         settings,
-        ip_address,
         pairing_manager,
         pairing_store,
         server,
-        arbiter,
         browser_capture,
     };
     let protected = Router::new()
-        .route("/api/logout", post(logout))
         .route("/api/password/change", post(change_password))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/pairing", get(get_pairing_devices))
@@ -130,9 +103,6 @@ pub async fn serve_web(
         ));
     let router = Router::new()
         .route("/", get(index))
-        .route("/style.css", get(stylesheet))
-        .route("/app.js", get(script))
-        .route("/kvm.js", get(kvm_script))
         .route("/binary.js", get(binary_script))
         .route("/hevc.js", get(hevc_script))
         .route("/isobmff.js", get(isobmff_script))
@@ -142,9 +112,6 @@ pub async fn serve_web(
         .route("/libde265-worker.js", get(libde265_worker))
         .route("/vendor/libde265/libde265.mjs", get(libde265_script))
         .route("/vendor/libde265/libde265.wasm", get(libde265_wasm))
-        .route("/api/status", get(status))
-        .route("/api/login", post(login))
-        .route("/api/password/recover", post(recover_password))
         .merge(protected)
         .with_state(state)
         .merge(crate::pikvm::routes(
@@ -163,24 +130,11 @@ pub async fn serve_web(
 }
 
 async fn index() -> Response {
-    let mut response = Html(INDEX_HTML).into_response();
-    response.headers_mut().insert(
-        CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; frame-ancestors 'none'; worker-src 'self'"),
-    );
-    response
-}
-
-async fn stylesheet() -> Response {
-    ([(CONTENT_TYPE, "text/css; charset=utf-8")], STYLE_CSS).into_response()
-}
-
-async fn script() -> Response {
-    javascript(APP_JS)
-}
-
-async fn kvm_script() -> Response {
-    javascript(KVM_JS)
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(LOCATION, HeaderValue::from_static("/kvm/"))],
+    )
+        .into_response()
 }
 
 async fn binary_script() -> Response {
@@ -221,50 +175,6 @@ async fn libde265_wasm() -> Response {
 
 fn javascript(source: &'static str) -> Response {
     ([(CONTENT_TYPE, "text/javascript; charset=utf-8")], source).into_response()
-}
-
-async fn status(State(state): State<WebState>, headers: HeaderMap) -> Json<Status> {
-    let authenticated = authenticate(&state.auth, &headers).await;
-    Json(Status {
-        authenticated,
-        password_configured: state.auth.has_password().await,
-        ip_address: state.ip_address,
-        capture_owner: state.arbiter.owner(),
-    })
-}
-
-async fn login(State(state): State<WebState>, Json(request): Json<PasswordLogin>) -> Response {
-    match state.auth.authenticate_password(&request.password).await {
-        Some(token) => session_response(StatusCode::OK, "signed in", &token),
-        None => message(StatusCode::UNAUTHORIZED, "invalid password"),
-    }
-}
-
-async fn logout(State(state): State<WebState>, headers: HeaderMap) -> Response {
-    if let Some(token) = session_token(&headers) {
-        state.auth.remove_session(token).await;
-    }
-    let mut response = message(StatusCode::OK, "signed out");
-    response.headers_mut().insert(
-        SET_COOKIE,
-        HeaderValue::from_static("moonlink_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),
-    );
-    response
-}
-
-async fn recover_password(
-    State(state): State<WebState>,
-    Json(request): Json<PasswordRecovery>,
-) -> Response {
-    match state
-        .auth
-        .recover_password(&request.otp, &request.new_password)
-        .await
-    {
-        Ok(Some(token)) => session_response(StatusCode::OK, "password updated", &token),
-        Ok(None) => message(StatusCode::UNAUTHORIZED, "invalid or expired recovery code"),
-        Err(err) => message(StatusCode::BAD_REQUEST, &err.to_string()),
-    }
 }
 
 async fn change_password(
@@ -415,17 +325,6 @@ fn session_token(headers: &HeaderMap) -> Option<&str> {
         .find_map(|cookie| cookie.strip_prefix("moonlink_session="))
 }
 
-fn session_response(status: StatusCode, body: &str, token: &str) -> Response {
-    let mut response = message(status, body);
-    let cookie =
-        format!("{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200");
-    response.headers_mut().insert(
-        SET_COOKIE,
-        HeaderValue::from_str(&cookie).expect("session cookie"),
-    );
-    response
-}
-
 fn unauthorized() -> Response {
     message(StatusCode::UNAUTHORIZED, "authentication required")
 }
@@ -444,10 +343,6 @@ fn message(status: StatusCode, body: &str) -> Response {
     response
 }
 
-const INDEX_HTML: &str = include_str!("../web/index.html");
-const STYLE_CSS: &str = include_str!("../web/style.css");
-const APP_JS: &str = include_str!("../web/app.js");
-const KVM_JS: &str = include_str!("../web/kvm.js");
 const BINARY_JS: &str = include_str!("../web/binary.js");
 const HEVC_JS: &str = include_str!("../web/hevc.js");
 const ISOBMFF_JS: &str = include_str!("../web/isobmff.js");

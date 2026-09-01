@@ -1,0 +1,93 @@
+.hidden.window.window-elegant.window-resizable#nanokvm-window(
+	data-wm-window-show-centered
+	style="width: min(820px, calc(100vw - 20px)); height: min(720px, calc(100vh - 20px));"
+)
+	.window-header
+		.window-grab NanoKVM settings
+		.window-buttons
+			button(data-wm-window-set-original)
+			button(data-wm-window-set-maximized)
+			button(data-wm-window-close)
+
+	#nanokvm-content
+		section
+			h2 Host and stream
+			.nanokvm-grid
+				label Host name
+					input#nanokvm-name(type="text" maxlength="64" required)
+				label Video codec
+					select#nanokvm-codec
+						option(value="hevc") HEVC
+				label Audio source
+					select#nanokvm-audio
+						option(value="usb") USB audio
+						option(value="none") Disabled
+						option(value="silence") Silence
+						option(value="tone") Test tone
+				label USB audio class
+					select#nanokvm-usb-audio-class
+						option(value="uac1") UAC1
+						option(value="uac2") UAC2
+				label Stream encryption
+					select#nanokvm-encryption
+						option(value="never") Disabled
+						option(value="opportunistic") When supported
+						option(value="mandatory") Required
+				label Capture width
+					input#nanokvm-width(type="number" min="1" required)
+				label Capture height
+					input#nanokvm-height(type="number" min="1" required)
+				label Capture FPS
+					input#nanokvm-fps(type="number" min="1" max="240" required)
+				label Frame divider
+					input#nanokvm-divider(type="number" min="1" required)
+
+		section
+			h2 Encoders
+			.nanokvm-grid
+				label Bitrate limit (kbps)
+					input#nanokvm-bitrate(type="number" min="1" placeholder="Automatic")
+				label GOP frames
+					input#nanokvm-gop(type="number" min="1" required)
+				label Video FEC (%)
+					input#nanokvm-fec(type="number" min="0" max="100" required)
+				label Minimum parity shards
+					input#nanokvm-parity(type="number" min="0" required)
+				label HEVC loop filter
+					input#nanokvm-loop-filter(type="number" placeholder="Driver default")
+				label Opus bitrate (kbps)
+					input#nanokvm-opus-rate(type="number" min="16" max="512" required)
+				label Opus complexity
+					input#nanokvm-opus-complexity(type="number" min="0" max="10" required)
+				label.nanokvm-check
+					input#nanokvm-repeat-headers(type="checkbox")
+					span Repeat codec headers
+				label.nanokvm-check
+					input#nanokvm-aud(type="checkbox")
+					span Insert access-unit delimiters
+			.nanokvm-actions
+				button#nanokvm-save(type="button") Save settings
+				span#nanokvm-save-status
+
+		section
+			h2 Moonlight devices
+			h3 Pending
+			#nanokvm-pending-devices.nanokvm-devices
+			h3 Paired
+			#nanokvm-paired-devices.nanokvm-devices
+
+		section
+			h2 Root password
+			.nanokvm-grid
+				label Current password
+					input#nanokvm-current-password(type="password" autocomplete="current-password")
+				label New password
+					input#nanokvm-new-password(type="password" minlength="8" autocomplete="new-password")
+			.nanokvm-actions
+				button#nanokvm-change-password(type="button") Change password
+
+		section
+			h2 System
+			.nanokvm-actions
+				button#nanokvm-logout(type="button") Sign out
+				button#nanokvm-reboot(type="button") Reboot KVM

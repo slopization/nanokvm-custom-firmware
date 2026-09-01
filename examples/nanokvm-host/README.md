@@ -75,10 +75,13 @@ by Moonlight. Use `--audio none` to advertise video only.
 
 ## Management UI
 
-The management UI listens on `http://<device-ip>:8080` by default. On each USB
-attachment, the SSD1306 display shows the device IP and a six-digit recovery
-code for five minutes. Use that code to set the initial password or replace a
-forgotten password. A recovery code expires after one use.
+The PiKVM UI listens on `http://<device-ip>:8080` by default. Open **System**
+and then **NanoKVM** for host, stream, audio, Moonlight pairing, password, and
+reboot controls. On each USB attachment, the SSD1306 display shows the device
+IP and a six-digit recovery code for five minutes. On the PiKVM login page,
+enter that code and the desired new password to reset the root password and
+sign in. Leave the recovery-code field empty for normal login. A recovery code
+expires after one use.
 
 Stream and encoder settings are stored in
 `/var/lib/moonlink/settings.json` with mode `0600`. Advertisement changes apply
@@ -95,8 +98,8 @@ use `--encryption-mode mandatory` to reject sessions that do not negotiate both
 encrypted media channels. `--encryption-mode never` disables media encryption;
 pairing and encrypted control traffic remain enabled.
 
-To pair a Moonlight client, start pairing on the client and open **Moonlight
-devices** in the web UI. Enter the four-digit PIN beside the pending device.
+To pair a Moonlight client, start pairing on the client and open **System**,
+**NanoKVM**, then **Moonlight devices**. Enter the four-digit PIN beside the pending device.
 Each trusted client is stored by its certificate fingerprint, so any number of
 phones, tablets, and desktop clients can remain paired. Devices can be revoked
 individually from the same list.

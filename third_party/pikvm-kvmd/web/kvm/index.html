@@ -50,6 +50,7 @@
     <link rel="stylesheet" href="../share/css/kvm/system.css">
     <link rel="stylesheet" href="../share/css/kvm/keyboard.css">
     <link rel="stylesheet" href="../share/css/kvm/about.css">
+    <link rel="stylesheet" href="../share/css/kvm/nanokvm.css">
     <link rel="stylesheet" href="../share/css/user.css">
     <link rel="preload" href="../share/svg/stream-mouse-cursor.svg" as="image">
     <link rel="preload" href="../share/pic/blank-stream.webp" as="image">
@@ -178,6 +179,9 @@
               </td>
               <td id="system-tool-log">
                 <button class="small" id="open-log-button" data-wm-menu-force-hide>&bull; Log</button>
+              </td>
+              <td>
+                <button class="small" data-wm-menu-force-hide data-wm-window-show="nanokvm-window">&bull; NanoKVM</button>
               </td>
               <td class="feature-disabled" id="system-tool-wol">
                 <button class="__gpio-button-__wol__ __gpio-button small" data-wm-menu-force-hide data-gpio-channel="__wol__" data-gpio-confirm="Are you sure to send Wake-on-LAN packet to the host?">&bull; WoL</button>
@@ -3140,6 +3144,127 @@
               </div>
         </div><br>
         <p class="text credits"><a target="_blank" href="https://pikvm.org">PiKVM Project</a>&nbsp; | &nbsp;<a target="_blank" href="https://docs.pikvm.org">Documentation</a>&nbsp; | &nbsp;<a target="_blank" href="https://pikvm.org/support">Support</a></p>
+      </div>
+    </div>
+    <div class="hidden window window-elegant window-resizable" id="nanokvm-window" data-wm-window-show-centered style="width: min(820px, calc(100vw - 20px)); height: min(720px, calc(100vh - 20px));">
+      <div class="window-header">
+        <div class="window-grab">NanoKVM settings</div>
+        <div class="window-buttons">
+          <button data-wm-window-set-original></button>
+          <button data-wm-window-set-maximized></button>
+          <button data-wm-window-close></button>
+        </div>
+      </div>
+      <div id="nanokvm-content">
+        <section>
+          <h2>Host and stream</h2>
+          <div class="nanokvm-grid">
+            <label>Host name
+              <input id="nanokvm-name" type="text" maxlength="64" required>
+            </label>
+            <label>Video codec
+              <select id="nanokvm-codec">
+                <option value="hevc">HEVC</option>
+              </select>
+            </label>
+            <label>Audio source
+              <select id="nanokvm-audio">
+                <option value="usb">USB audio</option>
+                <option value="none">Disabled</option>
+                <option value="silence">Silence</option>
+                <option value="tone">Test tone</option>
+              </select>
+            </label>
+            <label>USB audio class
+              <select id="nanokvm-usb-audio-class">
+                <option value="uac1">UAC1</option>
+                <option value="uac2">UAC2</option>
+              </select>
+            </label>
+            <label>Stream encryption
+              <select id="nanokvm-encryption">
+                <option value="never">Disabled</option>
+                <option value="opportunistic">When supported</option>
+                <option value="mandatory">Required</option>
+              </select>
+            </label>
+            <label>Capture width
+              <input id="nanokvm-width" type="number" min="1" required>
+            </label>
+            <label>Capture height
+              <input id="nanokvm-height" type="number" min="1" required>
+            </label>
+            <label>Capture FPS
+              <input id="nanokvm-fps" type="number" min="1" max="240" required>
+            </label>
+            <label>Frame divider
+              <input id="nanokvm-divider" type="number" min="1" required>
+            </label>
+          </div>
+        </section>
+        <section>
+          <h2>Encoders</h2>
+          <div class="nanokvm-grid">
+            <label>Bitrate limit (kbps)
+              <input id="nanokvm-bitrate" type="number" min="1" placeholder="Automatic">
+            </label>
+            <label>GOP frames
+              <input id="nanokvm-gop" type="number" min="1" required>
+            </label>
+            <label>Video FEC (%)
+              <input id="nanokvm-fec" type="number" min="0" max="100" required>
+            </label>
+            <label>Minimum parity shards
+              <input id="nanokvm-parity" type="number" min="0" required>
+            </label>
+            <label>HEVC loop filter
+              <input id="nanokvm-loop-filter" type="number" placeholder="Driver default">
+            </label>
+            <label>Opus bitrate (kbps)
+              <input id="nanokvm-opus-rate" type="number" min="16" max="512" required>
+            </label>
+            <label>Opus complexity
+              <input id="nanokvm-opus-complexity" type="number" min="0" max="10" required>
+            </label>
+            <label class="nanokvm-check">
+              <input id="nanokvm-repeat-headers" type="checkbox"><span>Repeat codec headers</span>
+            </label>
+            <label class="nanokvm-check">
+              <input id="nanokvm-aud" type="checkbox"><span>Insert access-unit delimiters</span>
+            </label>
+          </div>
+          <div class="nanokvm-actions">
+            <button id="nanokvm-save" type="button">Save settings</button><span id="nanokvm-save-status"></span>
+          </div>
+        </section>
+        <section>
+          <h2>Moonlight devices</h2>
+          <h3>Pending</h3>
+          <div class="nanokvm-devices" id="nanokvm-pending-devices"></div>
+          <h3>Paired</h3>
+          <div class="nanokvm-devices" id="nanokvm-paired-devices"></div>
+        </section>
+        <section>
+          <h2>Root password</h2>
+          <div class="nanokvm-grid">
+            <label>Current password
+              <input id="nanokvm-current-password" type="password" autocomplete="current-password">
+            </label>
+            <label>New password
+              <input id="nanokvm-new-password" type="password" minlength="8" autocomplete="new-password">
+            </label>
+          </div>
+          <div class="nanokvm-actions">
+            <button id="nanokvm-change-password" type="button">Change password</button>
+          </div>
+        </section>
+        <section>
+          <h2>System</h2>
+          <div class="nanokvm-actions">
+            <button id="nanokvm-logout" type="button">Sign out</button>
+            <button id="nanokvm-reboot" type="button">Reboot KVM</button>
+          </div>
+        </section>
       </div>
     </div>
     <div class="hidden window window-elegant window-resizable" id="webterm-window" data-wm-window-show-centered style="display: flex; min-width: 720px; min-height: 480px">

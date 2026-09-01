@@ -28,6 +28,7 @@ import {checkBrowser} from "../bb.js";
 import {wm, initWindowManager} from "../wm.js";
 
 import {Session} from "./session.js";
+import {Nanokvm} from "./nanokvm.js";
 
 
 export function main() {
@@ -60,6 +61,7 @@ export function main() {
 	});
 
 	initWindowManager();
+	new Nanokvm();
 
 	tools.el.setOnClick($("open-log-button"), () => tools.windowOpen("api/log?seek=3600&follow=1"));
 

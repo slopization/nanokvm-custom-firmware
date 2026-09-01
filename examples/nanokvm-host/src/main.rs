@@ -134,7 +134,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.bind_web,
         auth.clone(),
         settings_store,
-        ip_address.clone(),
         pairing_manager,
         pairing_store.clone(),
         handle.controller(),

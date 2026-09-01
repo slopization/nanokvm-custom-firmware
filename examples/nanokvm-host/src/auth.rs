@@ -55,12 +55,6 @@ impl AuthState {
         }
     }
 
-    pub async fn has_password(&self) -> bool {
-        self.password_hash()
-            .await
-            .is_some_and(|hash| !hash.is_empty() && hash != "!" && hash != "*")
-    }
-
     pub async fn issue_otp(&self) -> String {
         let code = format!("{:06}", rand::random_range(0..1_000_000_u32));
         *self.otp.lock().await = Some(Otp {
