@@ -56,7 +56,7 @@ html(lang="en")
 		meta(name="msapplication-TileColor" content="#2b5797")
 		meta(name="theme-color" content="#ffffff")
 
-		each name in ["vars", "main"].concat(css_list).concat(["user"])
+		each name in ["vars", "main"].concat(css_list)
 			link(rel="stylesheet" href=`${css_dir}/${name}.css`)
 
 		block head

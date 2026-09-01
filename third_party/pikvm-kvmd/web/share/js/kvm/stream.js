@@ -200,10 +200,8 @@ export function Streamer() {
 	};
 
 	self.ensureDeps = function(cb) {
-		JanusStreamer.ensure_janus(function(avail) {
-			__janus_imported = avail;
-			cb();
-		});
+		__janus_imported = false;
+		cb();
 	};
 
 	self.getGeometry = function() {

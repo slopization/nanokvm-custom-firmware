@@ -824,7 +824,7 @@ function __WindowManager() {
 		el_win.addEventListener("pointerrawupdate", function(ev) {
 			// События pointerdown и touchdown не генерируются при ресайзе за уголок,
 			// поэтому отлавливаем pointerrawupdate для тач-событий.
-			let events = ev.getCoalescedEvents();
+			let events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
 			for (ev of events) {
 				if (
 					ev.target === el_win && ev.pointerType === "touch" && ev.buttons
