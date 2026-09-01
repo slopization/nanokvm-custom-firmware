@@ -50,11 +50,11 @@ struct Jiggler(Arc<AtomicBool>);
 
 #[derive(Deserialize)]
 struct LoginForm {
-    #[allow(dead_code)]
     user: String,
     passwd: String,
-    #[allow(dead_code)]
-    expire: Option<u64>,
+    otp: Option<String>,
+    #[serde(rename = "expire")]
+    _expire: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -242,8 +242,20 @@ async fn auth_check(State(state): State<PikvmState>, headers: HeaderMap) -> Stat
 }
 
 async fn auth_login(State(state): State<PikvmState>, Form(form): Form<LoginForm>) -> Response {
-    let Some(token) = state.auth.authenticate_password(&form.passwd).await else {
+    if form.user != "root" {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    let token = if let Some(otp) = form.otp.as_deref().filter(|otp| !otp.is_empty()) {
+        match state.auth.recover_password(otp, &form.passwd).await {
+            Ok(Some(token)) => token,
+            Ok(None) => return StatusCode::FORBIDDEN.into_response(),
+            Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        }
+    } else {
+        let Some(token) = state.auth.authenticate_password(&form.passwd).await else {
+            return StatusCode::FORBIDDEN.into_response();
+        };
+        token
     };
     let mut response = StatusCode::OK.into_response();
     let cookie =

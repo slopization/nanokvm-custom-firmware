@@ -58,9 +58,10 @@ function __login() {
 		return;
 	}
 
-	let e_passwd = encodeURIComponent($("passwd-input").value + $("code-input").value);
+	let e_passwd = encodeURIComponent($("passwd-input").value);
+	let e_otp = encodeURIComponent($("code-input").value);
 	let e_expire = encodeURIComponent(tools.radio.getValue("expire-radio"));
-	let body = `user=${e_user}&passwd=${e_passwd}&expire=${e_expire}`;
+	let body = `user=${e_user}&passwd=${e_passwd}&otp=${e_otp}&expire=${e_expire}`;
 
 	tools.httpPost("api/auth/login", null, function(http) {
 		switch (http.status) {
@@ -69,7 +70,7 @@ function __login() {
 				break;
 
 			case 403:
-				wm.error("Invalid username, password, or OTP").then(__tryAgain);
+				wm.error("Invalid username, password, or recovery code").then(__tryAgain);
 				break;
 
 			default: {
