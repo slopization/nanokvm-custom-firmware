@@ -7,6 +7,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
+use tokio::sync::{Mutex, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::audio::{AudioGenerator, USB_AUDIO_CHANNELS, USB_AUDIO_SAMPLE_RATE};
@@ -32,6 +33,7 @@ pub struct BrowserCapture {
     v4l2: Option<V4l2Settings>,
     audio: AudioSettings,
     audio_active: Arc<AtomicBool>,
+    active_video: Arc<Mutex<Option<ActiveVideoStream>>>,
 }
 
 impl BrowserCapture {
@@ -47,6 +49,7 @@ impl BrowserCapture {
             v4l2,
             audio,
             audio_active: Arc::new(AtomicBool::new(false)),
+            active_video: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -155,6 +158,16 @@ impl BrowserCapture {
                 "browser capture requires the V4L2 source".to_owned(),
             ));
         };
+        if self.arbiter.owner() == Some(SessionOwner::Moonlight) {
+            return Err((
+                StatusCode::CONFLICT,
+                "capture is owned by Moonlight".to_owned(),
+            ));
+        }
+        let mut active_video = self.active_video.lock().await;
+        if let Some(previous) = active_video.take() {
+            previous.cancel_and_wait().await;
+        }
         let lease = self.arbiter.acquire(SessionOwner::Web).map_err(|owner| {
             (
                 StatusCode::CONFLICT,
@@ -192,13 +205,18 @@ impl BrowserCapture {
                 fps,
             ))))
             .expect("new stream channel");
+        let (active, mut cancellation, completion) = ActiveVideoStream::new();
+        *active_video = Some(active);
         tokio::spawn(async move {
-            let _lease = lease;
             let mut waiting_for_keyframe = false;
             let mut stream_timestamp = 0_u32;
             let timestamp_step = STREAM_TIMESCALE / fps.max(1);
             loop {
-                let frame = match session.next_encoded().await {
+                let frame = match next_frame(&mut session, &sender, &mut cancellation).await {
+                    None => break,
+                    Some(frame) => frame,
+                };
+                let frame = match frame {
                     Ok(Some(frame)) => frame,
                     Ok(None) => continue,
                     Err(err) => {
@@ -241,7 +259,10 @@ impl BrowserCapture {
                 tokio::task::yield_now().await;
             }
             let _ = session.stop().await;
+            drop(lease);
+            drop(completion);
         });
+        drop(active_video);
 
         let mut response = Response::new(Body::from_stream(ReceiverStream::new(receiver)));
         let headers = response.headers_mut();
@@ -255,6 +276,60 @@ impl BrowserCapture {
         );
         headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
         Ok(response)
+    }
+}
+
+struct ActiveVideoStream {
+    cancellation: watch::Sender<bool>,
+    completion: watch::Receiver<bool>,
+}
+
+impl ActiveVideoStream {
+    fn new() -> (Self, watch::Receiver<bool>, VideoStreamCompletion) {
+        let (cancellation, cancellation_rx) = watch::channel(false);
+        let (completion_tx, completion) = watch::channel(false);
+        (
+            Self {
+                cancellation,
+                completion,
+            },
+            cancellation_rx,
+            VideoStreamCompletion(completion_tx),
+        )
+    }
+
+    async fn cancel_and_wait(mut self) {
+        let _ = self.cancellation.send(true);
+        while !*self.completion.borrow() && self.completion.changed().await.is_ok() {}
+    }
+}
+
+struct VideoStreamCompletion(watch::Sender<bool>);
+
+impl Drop for VideoStreamCompletion {
+    fn drop(&mut self) {
+        let _ = self.0.send(true);
+    }
+}
+
+async fn next_frame(
+    session: &mut V4l2Session,
+    sender: &tokio::sync::mpsc::Sender<Result<Bytes, Infallible>>,
+    cancellation: &mut watch::Receiver<bool>,
+) -> Option<Result<Option<crate::v4l2_provider::EncodedFrame>, moonlink_core::MediaSessionError>> {
+    let frame = session.next_encoded();
+    tokio::pin!(frame);
+    loop {
+        tokio::select! {
+            biased;
+            result = cancellation.changed() => {
+                if result.is_err() || *cancellation.borrow() {
+                    return None;
+                }
+            }
+            _ = sender.closed() => return None,
+            result = &mut frame => return Some(result),
+        }
     }
 }
 
