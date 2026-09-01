@@ -1,4 +1,5 @@
 mod alsa_pcm;
+mod atx;
 mod audio;
 mod auth;
 mod browser_stream;
@@ -10,7 +11,9 @@ mod hevc;
 mod hid;
 mod hid_report;
 mod media;
+mod msd;
 mod pairing_manager;
+mod pikvm;
 mod session_arbiter;
 mod settings;
 mod usb_status;
@@ -45,15 +48,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pairing_manager = PairingManager::default();
     let ip_address = primary_ipv4()?.to_string();
 
-    let _usb_gadget = if args.setup_usb_gadget {
+    let usb_gadget = if args.setup_usb_gadget {
         Some(setup_usb_gadget(&GadgetConfig::from_args(&args))?)
     } else {
         None
     };
     let input_sink = UsbGadgetInputSink::open(args.hid_path(), args.trace_pointer_input).await?;
+    let atx = match atx::AtxController::open() {
+        Ok(controller) => Some(controller),
+        Err(error) => {
+            eprintln!("ATX GPIO unavailable: {error}");
+            None
+        }
+    };
 
     let source_kind = args.source_kind()?;
     let audio = args.audio_settings();
+    let web_audio = audio.clone();
     let runtime_config = running_settings.runtime_config()?;
     let arbiter = SessionArbiter::default();
 
@@ -115,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let handle = ServerBuilder::new(config)
         .media_provider(provider)
-        .input_sink(input_sink)
+        .input_sink(input_sink.clone())
         .pairing_store(pairing_store.clone())
         .serve()
         .await?;
@@ -129,6 +140,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.controller(),
         arbiter,
         web_v4l2,
+        web_audio,
+        input_sink,
+        atx,
+        usb_gadget
+            .as_ref()
+            .map(|gadget| gadget.mass_storage.clone()),
     ));
 
     println!(

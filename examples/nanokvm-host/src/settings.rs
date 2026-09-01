@@ -9,7 +9,9 @@ use moonlink_protocol::{CodecCapabilities, VideoCodec};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::cli::{Args, AudioSettings, AudioSource, StreamCodec, StreamEncryptionMode};
+use crate::cli::{
+    Args, AudioSettings, AudioSource, StreamCodec, StreamEncryptionMode, UsbAudioClass,
+};
 use crate::v4l2_provider::V4l2Settings;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -17,6 +19,8 @@ pub struct MoonlinkSettings {
     pub name: String,
     pub codec: StreamCodec,
     pub audio: AudioSource,
+    #[serde(default)]
+    pub usb_audio_class: UsbAudioClass,
     pub opus_bitrate_kbps: u32,
     pub opus_complexity: u8,
     pub capture_width: u32,
@@ -40,7 +44,12 @@ impl MoonlinkSettings {
         let mut previous = previous.clone();
         current.name.clear();
         previous.name.clear();
+        current.usb_audio_class = previous.usb_audio_class;
         current != previous
+    }
+
+    pub fn requires_restart(&self, previous: &Self) -> bool {
+        self.usb_audio_class != previous.usb_audio_class
     }
 
     pub fn from_args(args: &Args) -> Self {
@@ -48,6 +57,7 @@ impl MoonlinkSettings {
             name: args.name.clone(),
             codec: args.codec,
             audio: args.audio,
+            usb_audio_class: args.usb_audio_class,
             opus_bitrate_kbps: args.opus_bitrate_kbps,
             opus_complexity: args.opus_complexity,
             capture_width: args.capture_width,
@@ -69,6 +79,7 @@ impl MoonlinkSettings {
         args.name.clone_from(&self.name);
         args.codec = self.codec;
         args.audio = self.audio;
+        args.usb_audio_class = self.usb_audio_class;
         args.opus_bitrate_kbps = self.opus_bitrate_kbps;
         args.opus_complexity = self.opus_complexity;
         args.capture_width = self.capture_width;
@@ -245,5 +256,41 @@ mod tests {
             migrated.encryption_mode,
             StreamEncryptionMode::Opportunistic
         );
+    }
+
+    #[test]
+    fn accepts_legacy_usb_audio_names_and_serializes_usb() {
+        for name in ["uac1", "uac2"] {
+            let source: AudioSource = serde_json::from_value(serde_json::json!(name)).unwrap();
+            assert_eq!(source, AudioSource::Usb);
+            let args = Args::try_parse_from(["nanokvm-host", "--audio", name]).unwrap();
+            assert_eq!(args.audio, AudioSource::Usb);
+        }
+        assert_eq!(
+            serde_json::to_value(AudioSource::Usb).unwrap(),
+            serde_json::json!("usb")
+        );
+    }
+
+    #[test]
+    fn defaults_missing_usb_audio_class_to_uac1() {
+        let args = Args::parse_from(["nanokvm-host"]);
+        let settings = MoonlinkSettings::from_args(&args);
+        let mut json = serde_json::to_value(settings).unwrap();
+        json.as_object_mut().unwrap().remove("usb_audio_class");
+
+        let migrated: MoonlinkSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(migrated.usb_audio_class, UsbAudioClass::Uac1);
+    }
+
+    #[test]
+    fn usb_audio_class_change_requires_restart_but_not_stream_restart() {
+        let args = Args::parse_from(["nanokvm-host"]);
+        let previous = MoonlinkSettings::from_args(&args);
+        let mut current = previous.clone();
+        current.usb_audio_class = UsbAudioClass::Uac2;
+
+        assert!(current.requires_restart(&previous));
+        assert!(!current.changes_stream(&previous));
     }
 }

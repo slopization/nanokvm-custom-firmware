@@ -82,3 +82,55 @@ fn map_mouse_button(button: u8) -> u8 {
         _ => 0,
     }
 }
+
+pub(super) async fn write_web_button(
+    sink: &UsbGadgetInputSink,
+    button: &str,
+    pressed: bool,
+) -> std::io::Result<()> {
+    let button = match button {
+        "left" => 1,
+        "middle" => 2,
+        "right" => 3,
+        "back" => 4,
+        "forward" => 5,
+        _ => return Ok(()),
+    };
+    sink.write_mouse(MouseEvent::Button { pressed, button })
+        .await
+}
+
+pub(super) async fn write_web_absolute(
+    sink: &UsbGadgetInputSink,
+    x: u16,
+    y: u16,
+) -> std::io::Result<()> {
+    let Some(file) = &sink.hid else {
+        return Ok(());
+    };
+    let mut state = sink.state.lock().await;
+    state.pointer_x = (u32::from(x) * u32::from(crate::hid_report::POINTER_AXIS_MAX)
+        / u32::from(u16::MAX)) as u16;
+    state.pointer_y = (u32::from(y) * u32::from(crate::hid_report::POINTER_AXIS_MAX)
+        / u32::from(u16::MAX)) as u16;
+    state.pointer_mode = PointerMode::Absolute;
+    let report = encode_absolute_pointer(&AbsolutePointerReport {
+        buttons: state.mouse_buttons,
+        x: state.pointer_x,
+        y: state.pointer_y,
+    })?;
+    drop(state);
+    write_report(file, &report).await
+}
+
+pub(super) async fn write_web_relative(
+    sink: &UsbGadgetInputSink,
+    dx: i8,
+    dy: i8,
+) -> std::io::Result<()> {
+    sink.write_mouse(MouseEvent::Relative {
+        dx: i16::from(dx),
+        dy: i16::from(dy),
+    })
+    .await
+}

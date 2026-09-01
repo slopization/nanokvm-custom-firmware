@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nanokvm-host --capture-device /dev/video0 --encoder-device /dev/video1 --raw-fourcc UYVY --codec hevc --capture-fps 60 --frame-divider 1 --gop 120 --setup-usb-gadget --audio uac2
+ExecStart=/usr/local/bin/nanokvm-host --capture-device /dev/video0 --encoder-device /dev/video1 --raw-fourcc UYVY --codec hevc --capture-fps 60 --frame-divider 1 --gop 120 --setup-usb-gadget --audio usb
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=10

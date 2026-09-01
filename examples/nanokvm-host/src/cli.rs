@@ -39,10 +39,12 @@ pub struct Args {
     pub bind_control: SocketAddr,
     #[arg(long, value_enum, default_value = "hevc")]
     pub codec: StreamCodec,
-    #[arg(long, value_enum, default_value = "uac2")]
+    #[arg(long, value_enum, default_value = "usb")]
     pub audio: AudioSource,
-    #[arg(long)]
-    pub uac2_pcm_device: Option<PathBuf>,
+    #[arg(long, value_enum, default_value = "uac1")]
+    pub usb_audio_class: UsbAudioClass,
+    #[arg(long, alias = "uac1-pcm-device", alias = "uac2-pcm-device")]
+    pub usb_pcm_device: Option<PathBuf>,
     #[arg(long, default_value_t = 128)]
     pub opus_bitrate_kbps: u32,
     #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(0..=10))]
@@ -99,6 +101,8 @@ pub struct Args {
     pub setup_usb_gadget: bool,
     #[arg(long, default_value = "/sys/kernel/config/usb_gadget/moonlink")]
     pub gadget_dir: PathBuf,
+    #[arg(long, default_value = "/var/lib/moonlink/msd")]
+    pub msd_dir: PathBuf,
     #[arg(long)]
     pub udc: Option<String>,
     #[arg(long, default_value = "0x1d6b")]
@@ -158,7 +162,7 @@ impl Args {
     pub fn audio_settings(&self) -> AudioSettings {
         AudioSettings {
             source: self.audio,
-            pcm_device: self.uac2_pcm_device.clone(),
+            pcm_device: self.usb_pcm_device.clone(),
             opus_bitrate_kbps: self.opus_bitrate_kbps,
             opus_complexity: self.opus_complexity,
         }
@@ -203,6 +207,16 @@ pub enum AudioSource {
     None,
     Silence,
     Tone,
+    #[value(alias = "uac1", alias = "uac2")]
+    #[serde(alias = "uac1", alias = "uac2")]
+    Usb,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UsbAudioClass {
+    #[default]
+    Uac1,
     Uac2,
 }
 

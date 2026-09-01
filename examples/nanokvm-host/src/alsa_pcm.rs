@@ -5,6 +5,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use tokio::io::unix::AsyncFd;
 
+use crate::audio::{
+    USB_AUDIO_VOLUME_MAX_DB_256, USB_AUDIO_VOLUME_MIN_DB_256, USB_AUDIO_VOLUME_RES_DB_256,
+};
+
 const CHANNELS: usize = 2;
 const ACCESS_RW_INTERLEAVED: usize = 3;
 const FORMAT_S16_LE: usize = 2;
@@ -21,19 +25,31 @@ const IOCTL_SW_PARAMS: libc::c_ulong = ioctl_read_write(0x13, 136);
 const IOCTL_PREPARE: libc::c_ulong = ioctl_none(0x40);
 const IOCTL_START: libc::c_ulong = ioctl_none(0x42);
 const IOCTL_READI_FRAMES: libc::c_ulong = ioctl_read(0x51, 24);
+const IOCTL_CTL_ELEM_READ: libc::c_ulong = ioctl_ctl_read_write(0x12, 1224);
+const CTL_ELEM_IFACE_MIXER: i32 = 2;
+const CAPTURE_SWITCH: &str = "PCM Capture Switch";
+const CAPTURE_VOLUME: &str = "PCM Capture Volume";
 
 pub struct PcmCapture {
     file: AsyncFd<File>,
     samples: Vec<i16>,
     frames_filled: usize,
     frame_samples: usize,
+    gain: Option<UsbGainControl>,
 }
 
 impl PcmCapture {
     pub fn open(path: Option<&Path>, frame_samples: usize) -> io::Result<Self> {
         let path = match path {
             Some(path) => path.to_owned(),
-            None => discover_uac2_capture_device()?,
+            None => discover_usb_capture_device()?,
+        };
+        let gain = match UsbGainControl::open_for_pcm(&path) {
+            Ok(gain) => Some(gain),
+            Err(err) => {
+                eprintln!("USB host volume control unavailable: {err}");
+                None
+            }
         };
         let file = OpenOptions::new()
             .read(true)
@@ -41,12 +57,13 @@ impl PcmCapture {
             .open(&path)?;
         configure(&file, frame_samples)?;
         let file = AsyncFd::new(file)?;
-        println!("capturing UAC2 audio from {}", path.display());
+        println!("capturing USB audio from {}", path.display());
         Ok(Self {
             file,
             samples: vec![0; frame_samples * CHANNELS],
             frames_filled: 0,
             frame_samples,
+            gain,
         })
     }
 
@@ -60,10 +77,12 @@ impl PcmCapture {
                 Ok(()) => {
                     if *frames_filled == frame_samples {
                         *frames_filled = 0;
-                        return Ok(std::mem::replace(
-                            samples,
-                            vec![0; frame_samples * CHANNELS],
-                        ));
+                        let mut completed =
+                            std::mem::replace(samples, vec![0; frame_samples * CHANNELS]);
+                        if let Some(gain) = &mut self.gain {
+                            gain.apply(&mut completed)?;
+                        }
+                        return Ok(completed);
                     }
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
@@ -75,6 +94,103 @@ impl PcmCapture {
                 Err(err) => return Err(err),
             }
         }
+    }
+}
+
+struct UsbGainControl {
+    file: File,
+    switch_id: SndCtlElemId,
+    volume_id: SndCtlElemId,
+    last: Option<(bool, i64)>,
+}
+
+impl UsbGainControl {
+    fn open_for_pcm(pcm_path: &Path) -> io::Result<Self> {
+        let control_path = control_path_for_pcm(pcm_path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "cannot derive ALSA control device from {}",
+                    pcm_path.display()
+                ),
+            )
+        })?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(control_path)?;
+        let mut gain = Self {
+            file,
+            switch_id: SndCtlElemId::named(CAPTURE_SWITCH),
+            volume_id: SndCtlElemId::named(CAPTURE_VOLUME),
+            last: None,
+        };
+        let mut switch_id = gain.switch_id.clone();
+        gain.read(&mut switch_id)?;
+        gain.switch_id = switch_id;
+        let mut volume_id = gain.volume_id.clone();
+        gain.read(&mut volume_id)?;
+        gain.volume_id = volume_id;
+        Ok(gain)
+    }
+
+    fn apply(&mut self, samples: &mut [i16]) -> io::Result<()> {
+        let mut switch_id = self.switch_id.clone();
+        let enabled = self.read(&mut switch_id)? != 0;
+        self.switch_id = switch_id;
+        let mut volume_id = self.volume_id.clone();
+        let volume_step = self.read(&mut volume_id)?;
+        self.volume_id = volume_id;
+
+        if self.last != Some((enabled, volume_step)) {
+            println!(
+                "USB host volume: enabled={enabled}, step={volume_step}, gain_db={:.1}",
+                gain_db(volume_step)
+            );
+            self.last = Some((enabled, volume_step));
+        }
+        apply_host_gain(samples, enabled, volume_step);
+        Ok(())
+    }
+
+    fn read(&self, id: &mut SndCtlElemId) -> io::Result<i64> {
+        let mut value = SndCtlElemValue::new(id.clone());
+        ioctl_mut(&self.file, IOCTL_CTL_ELEM_READ, &mut value)?;
+        *id = value.id;
+        Ok(value.values[0])
+    }
+}
+
+fn control_path_for_pcm(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_str()?;
+    let card = name.strip_prefix("pcmC")?.split_once('D')?.0;
+    if card.is_empty() || !card.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(path.with_file_name(format!("controlC{card}")))
+}
+
+fn gain_db(volume_step: i64) -> f32 {
+    let max_step = i64::from(
+        (USB_AUDIO_VOLUME_MAX_DB_256 - USB_AUDIO_VOLUME_MIN_DB_256) / USB_AUDIO_VOLUME_RES_DB_256,
+    );
+    let step = volume_step.clamp(0, max_step);
+    (f32::from(USB_AUDIO_VOLUME_MIN_DB_256) + step as f32 * f32::from(USB_AUDIO_VOLUME_RES_DB_256))
+        / 256.0
+}
+
+fn apply_host_gain(samples: &mut [i16], enabled: bool, volume_step: i64) {
+    if !enabled {
+        samples.fill(0);
+        return;
+    }
+    let db = gain_db(volume_step);
+    if db >= 0.0 {
+        return;
+    }
+    let gain_q16 = (10.0_f32.powf(db / 20.0) * 65_536.0).round() as i32;
+    for sample in samples {
+        *sample = ((i32::from(*sample) * gain_q16) >> 16) as i16;
     }
 }
 
@@ -124,7 +240,7 @@ fn recover_xrun(file: &File, frames_filled: &mut usize) -> io::Result<()> {
     Ok(())
 }
 
-fn discover_uac2_capture_device() -> io::Result<PathBuf> {
+fn discover_usb_capture_device() -> io::Result<PathBuf> {
     for entry in std::fs::read_dir("/sys/class/sound")? {
         let entry = entry?;
         let name = entry.file_name();
@@ -132,7 +248,7 @@ fn discover_uac2_capture_device() -> io::Result<PathBuf> {
             continue;
         };
         let id = std::fs::read_to_string(entry.path().join("id")).unwrap_or_default();
-        if id.trim() == "UAC2Gadget" {
+        if matches!(id.trim(), "UAC1Gadget" | "UAC2Gadget") {
             let path = PathBuf::from(format!("/dev/snd/pcmC{card}D0c"));
             if path.exists() {
                 return Ok(path);
@@ -141,7 +257,7 @@ fn discover_uac2_capture_device() -> io::Result<PathBuf> {
     }
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "UAC2 gadget ALSA capture device was not found",
+        "USB audio gadget ALSA capture device was not found",
     ))
 }
 
@@ -302,6 +418,52 @@ struct SndXferI {
     frames: u64,
 }
 
+#[repr(C)]
+#[derive(Clone)]
+struct SndCtlElemId {
+    numid: u32,
+    interface: i32,
+    device: u32,
+    subdevice: u32,
+    name: [u8; 44],
+    index: u32,
+}
+
+impl SndCtlElemId {
+    fn named(name: &str) -> Self {
+        assert!(name.len() < 44, "ALSA control name is too long");
+        let mut id = Self {
+            numid: 0,
+            interface: CTL_ELEM_IFACE_MIXER,
+            device: 0,
+            subdevice: 0,
+            name: [0; 44],
+            index: 0,
+        };
+        id.name[..name.len()].copy_from_slice(name.as_bytes());
+        id
+    }
+}
+
+#[repr(C)]
+struct SndCtlElemValue {
+    id: SndCtlElemId,
+    indirect: u32,
+    values: [i64; 128],
+    reserved: [u8; 128],
+}
+
+impl SndCtlElemValue {
+    fn new(id: SndCtlElemId) -> Self {
+        Self {
+            id,
+            indirect: 0,
+            values: [0; 128],
+            reserved: [0; 128],
+        }
+    }
+}
+
 const fn ioctl_none(number: u32) -> libc::c_ulong {
     ((b'A' as u32) << 8 | number) as libc::c_ulong
 }
@@ -312,6 +474,10 @@ const fn ioctl_read(number: u32, size: u32) -> libc::c_ulong {
 
 const fn ioctl_read_write(number: u32, size: u32) -> libc::c_ulong {
     ioctl(3, number, size)
+}
+
+const fn ioctl_ctl_read_write(number: u32, size: u32) -> libc::c_ulong {
+    ((3 << 30) | (size << 16) | ((b'U' as u32) << 8) | number) as libc::c_ulong
 }
 
 const fn ioctl(direction: u32, number: u32, size: u32) -> libc::c_ulong {
@@ -327,9 +493,28 @@ mod tests {
         assert_eq!(std::mem::size_of::<SndPcmHwParams>(), 608);
         assert_eq!(std::mem::size_of::<SndPcmSwParams>(), 136);
         assert_eq!(std::mem::size_of::<SndXferI>(), 24);
+        assert_eq!(std::mem::size_of::<SndCtlElemId>(), 64);
+        assert_eq!(std::mem::size_of::<SndCtlElemValue>(), 1224);
         assert_eq!(IOCTL_HW_PARAMS, 0xc260_4111);
         assert_eq!(IOCTL_SW_PARAMS, 0xc088_4113);
         assert_eq!(IOCTL_PREPARE, 0x4140);
         assert_eq!(IOCTL_READI_FRAMES, 0x8018_4151);
+        assert_eq!(IOCTL_CTL_ELEM_READ, 0xc4c8_5512);
+    }
+
+    #[test]
+    fn applies_usb_mute_and_decibel_gain() {
+        let mut muted = [i16::MAX, i16::MIN];
+        apply_host_gain(&mut muted, false, 100);
+        assert_eq!(muted, [0, 0]);
+
+        let mut full = [12_345, -12_345];
+        apply_host_gain(&mut full, true, 100);
+        assert_eq!(full, [12_345, -12_345]);
+
+        let mut minus_six_db = [20_000, -20_000];
+        apply_host_gain(&mut minus_six_db, true, 94);
+        assert!((minus_six_db[0] - 10_024).abs() <= 1);
+        assert!((minus_six_db[1] + 10_024).abs() <= 1);
     }
 }

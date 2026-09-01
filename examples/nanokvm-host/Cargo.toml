@@ -7,13 +7,15 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 audiopus_sys.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["ws"] }
 bytes.workspace = true
 clap.workspace = true
 drm.workspace = true
 hex.workspace = true
+gpiocdev = "0.8"
 hidreport.workspace = true
 libc.workspace = true
+mime_guess = "2.0"
 moonlink-core = { path = "../../crates/moonlink-core" }
 moonlink-protocol = { path = "../../crates/moonlink-protocol" }
 moonlink-tokio = { path = "../../crates/moonlink-tokio" }
@@ -21,6 +23,8 @@ moonlink-v4l2 = { path = "../../crates/moonlink-v4l2" }
 oxideav-bitstream.workspace = true
 opus.workspace = true
 rand.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
+rust-embed = "8.12"
 serde.workspace = true
 serde_json.workspace = true
 ssmarshal.workspace = true

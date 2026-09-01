@@ -65,7 +65,7 @@ function __login() {
 	tools.httpPost("api/auth/login", null, function(http) {
 		switch (http.status) {
 			case 200:
-				tools.currentOpen("");
+				window.location.replace("../kvm/");
 				break;
 
 			case 403:

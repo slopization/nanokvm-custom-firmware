@@ -19,7 +19,7 @@ mod touch;
 const DEFAULT_POINTER_WIDTH: i32 = 1920;
 const DEFAULT_POINTER_HEIGHT: i32 = 1080;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct UsbGadgetInputSink {
     hid: Option<Arc<Mutex<AsyncFd<File>>>>,
     state: Arc<Mutex<InputState>>,
@@ -74,6 +74,51 @@ impl UsbGadgetInputSink {
                 Ok(())
             }
         }
+    }
+
+    pub async fn write_dom_key(&self, code: &str, pressed: bool) -> std::io::Result<()> {
+        self.write_keyboard_usage(keyboard::map_dom_code(code), pressed)
+            .await
+    }
+
+    pub async fn write_web_button(&self, button: &str, pressed: bool) -> std::io::Result<()> {
+        mouse::write_web_button(self, button, pressed).await
+    }
+
+    pub async fn write_web_absolute(&self, x: u16, y: u16) -> std::io::Result<()> {
+        mouse::write_web_absolute(self, x, y).await
+    }
+
+    pub async fn write_web_relative(&self, dx: i8, dy: i8) -> std::io::Result<()> {
+        mouse::write_web_relative(self, dx, dy).await
+    }
+
+    pub async fn write_web_wheel(&self, dy: i8) -> std::io::Result<()> {
+        scroll::write_web_wheel(self, dy).await
+    }
+
+    pub async fn release_all(&self) -> std::io::Result<()> {
+        let Some(file) = &self.hid else {
+            return Ok(());
+        };
+        let mut state = self.state.lock().await;
+        state.keyboard = KeyboardState::default();
+        state.mouse_buttons = 0;
+        let keyboard = crate::hid_report::encode_keyboard(&crate::hid_report::KeyboardReport {
+            modifiers: 0,
+            reserved: 0,
+            keys: [0; 6],
+        })?;
+        let mouse =
+            crate::hid_report::encode_relative_mouse(&crate::hid_report::RelativeMouseReport {
+                buttons: 0,
+                x: 0,
+                y: 0,
+                wheel: 0,
+            })?;
+        drop(state);
+        write_report(file, &keyboard).await?;
+        write_report(file, &mouse).await
     }
 }
 

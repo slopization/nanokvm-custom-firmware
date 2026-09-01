@@ -1,4 +1,6 @@
 use std::convert::Infallible;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::body::Body;
 use axum::http::header::CONTENT_TYPE;
@@ -7,23 +9,29 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::audio::{AudioGenerator, USB_AUDIO_CHANNELS, USB_AUDIO_SAMPLE_RATE};
 use crate::cli::{AudioSettings, AudioSource, StreamCodec};
 use crate::session_arbiter::{SessionArbiter, SessionOwner};
 use crate::settings::SettingsStore;
 use crate::v4l2_provider::{V4l2Session, V4l2Settings, output_fps};
-use moonlink_core::{MediaSession, MediaSessionConfig, VideoControlMessage};
+use moonlink_core::{AudioSession, MediaSession, MediaSessionConfig, VideoControlMessage};
 use moonlink_protocol::VideoCodec;
 
 const STREAM_MAGIC: &[u8; 8] = b"NKHEVC01";
 const STREAM_TIMESCALE: u32 = 90_000;
 const STREAM_QUEUE_FRAMES: usize = 4;
 const MAX_ACCESS_UNIT_SIZE: usize = 32 * 1024 * 1024;
+const WEB_AUDIO_FRAME_SAMPLES: u32 = 960;
+const OPUS_STREAM_MAGIC: &[u8; 8] = b"NKOPUS01";
+const OPUS_STREAM_QUEUE_FRAMES: usize = 4;
 
 #[derive(Clone)]
 pub struct BrowserCapture {
     arbiter: SessionArbiter,
     settings: SettingsStore,
     v4l2: Option<V4l2Settings>,
+    audio: AudioSettings,
+    audio_active: Arc<AtomicBool>,
 }
 
 impl BrowserCapture {
@@ -31,11 +39,14 @@ impl BrowserCapture {
         arbiter: SessionArbiter,
         settings: SettingsStore,
         v4l2: Option<V4l2Settings>,
+        audio: AudioSettings,
     ) -> Self {
         Self {
             arbiter,
             settings,
             v4l2,
+            audio,
+            audio_active: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -44,6 +55,97 @@ impl BrowserCapture {
             Ok(response) => response,
             Err((status, message)) => (status, message).into_response(),
         }
+    }
+
+    pub async fn audio_stream(&self) -> Response {
+        if self.arbiter.owner() != Some(SessionOwner::Web) {
+            return (
+                StatusCode::CONFLICT,
+                "web video capture must be active before audio",
+            )
+                .into_response();
+        }
+        let mut audio_settings = self.audio.clone();
+        self.settings.get().await.apply_audio(&mut audio_settings);
+        if audio_settings.source == AudioSource::None {
+            return (StatusCode::NOT_IMPLEMENTED, "browser audio is disabled").into_response();
+        }
+        if self
+            .audio_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return (StatusCode::CONFLICT, "browser audio is already active").into_response();
+        }
+        let audio_lease = AudioStreamLease(self.audio_active.clone());
+        let mut audio = match AudioGenerator::new(audio_settings, WEB_AUDIO_FRAME_SAMPLES) {
+            Ok(audio) => audio,
+            Err(error) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
+            }
+        };
+        let (sender, receiver) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(
+            OPUS_STREAM_QUEUE_FRAMES * 2 + 1,
+        );
+        sender
+            .try_send(Ok(Bytes::copy_from_slice(&opus_stream_preamble())))
+            .expect("new audio channel");
+        let arbiter = self.arbiter.clone();
+        tokio::spawn(async move {
+            let _audio_lease = audio_lease;
+            loop {
+                let frame = tokio::select! {
+                    _ = sender.closed() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        if arbiter.owner() != Some(SessionOwner::Web) {
+                            break;
+                        }
+                        continue;
+                    }
+                    frame = audio.next_audio() => frame,
+                };
+                let frame = match frame {
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        eprintln!("browser audio stopped: {error}");
+                        break;
+                    }
+                };
+                let (header, payload) = match opus_stream_packet(frame.data, frame.pts) {
+                    Ok(packet) => packet,
+                    Err(error) => {
+                        eprintln!("browser Opus stream stopped: {error}");
+                        break;
+                    }
+                };
+                match sender.try_reserve_many(2) {
+                    Ok(mut permits) => {
+                        permits.next().expect("two reserved slots").send(Ok(header));
+                        permits
+                            .next()
+                            .expect("two reserved slots")
+                            .send(Ok(payload));
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {}
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => break,
+                }
+                tokio::task::yield_now().await;
+            }
+        });
+
+        let mut response = Response::new(Body::from_stream(ReceiverStream::new(receiver)));
+        let headers = response.headers_mut();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/vnd.nanokvm.opus"),
+        );
+        headers.insert(
+            "cache-control",
+            HeaderValue::from_static("no-store, no-transform"),
+        );
+        headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
+        response
     }
 
     async fn start(&self) -> Result<Response, (StatusCode, String)> {
@@ -105,6 +207,7 @@ impl BrowserCapture {
                     }
                 };
                 if waiting_for_keyframe && !frame.keyframe {
+                    tokio::task::yield_now().await;
                     continue;
                 }
                 match sender.try_reserve_many(2) {
@@ -126,16 +229,16 @@ impl BrowserCapture {
                         waiting_for_keyframe = false;
                     }
                     Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
-                        let request_keyframe = !waiting_for_keyframe || frame.keyframe;
-                        waiting_for_keyframe = true;
-                        if request_keyframe {
+                        if !waiting_for_keyframe {
                             let _ = session
                                 .handle_video_control(VideoControlMessage::RequestIdrFrame)
                                 .await;
                         }
+                        waiting_for_keyframe = true;
                     }
                     Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => break,
                 }
+                tokio::task::yield_now().await;
             }
             let _ = session.stop().await;
         });
@@ -153,6 +256,36 @@ impl BrowserCapture {
         headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
         Ok(response)
     }
+}
+
+struct AudioStreamLease(Arc<AtomicBool>);
+
+impl Drop for AudioStreamLease {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn opus_stream_preamble() -> [u8; 16] {
+    let mut bytes = [0; 16];
+    bytes[..8].copy_from_slice(OPUS_STREAM_MAGIC);
+    bytes[8..12].copy_from_slice(&USB_AUDIO_SAMPLE_RATE.to_be_bytes());
+    bytes[12..14].copy_from_slice(&u16::from(USB_AUDIO_CHANNELS).to_be_bytes());
+    bytes[14..16].copy_from_slice(&(WEB_AUDIO_FRAME_SAMPLES as u16).to_be_bytes());
+    bytes
+}
+
+fn opus_stream_packet(
+    payload: Vec<u8>,
+    timestamp: Option<i64>,
+) -> Result<(Bytes, Bytes), &'static str> {
+    let length = u32::try_from(payload.len()).map_err(|_| "Opus packet exceeds u32 limit")?;
+    let timestamp = timestamp.unwrap_or(0);
+    let timestamp = u32::try_from(timestamp).map_err(|_| "invalid Opus timestamp")?;
+    let mut header = [0; 8];
+    header[..4].copy_from_slice(&length.to_be_bytes());
+    header[4..8].copy_from_slice(&timestamp.to_be_bytes());
+    Ok((Bytes::copy_from_slice(&header), Bytes::from(payload)))
 }
 
 fn stream_preamble(width: u32, height: u32, fps: u32) -> [u8; 24] {
@@ -208,5 +341,25 @@ mod tests {
     #[test]
     fn rejects_oversized_access_units() {
         assert!(stream_frame(vec![0; MAX_ACCESS_UNIT_SIZE + 1], 0, false).is_err());
+    }
+
+    #[test]
+    fn opus_stream_is_timestamped_and_describes_its_format() {
+        let preamble = opus_stream_preamble();
+        assert_eq!(&preamble[..8], OPUS_STREAM_MAGIC);
+        assert_eq!(
+            u32::from_be_bytes(preamble[8..12].try_into().unwrap()),
+            48_000
+        );
+        assert_eq!(u16::from_be_bytes(preamble[12..14].try_into().unwrap()), 2);
+        assert_eq!(
+            u16::from_be_bytes(preamble[14..16].try_into().unwrap()),
+            960
+        );
+
+        let (header, payload) = opus_stream_packet(vec![1, 2, 3], Some(960)).unwrap();
+        assert_eq!(u32::from_be_bytes(header[..4].try_into().unwrap()), 3);
+        assert_eq!(u32::from_be_bytes(header[4..8].try_into().unwrap()), 960);
+        assert_eq!(&payload[..], &[1, 2, 3]);
     }
 }

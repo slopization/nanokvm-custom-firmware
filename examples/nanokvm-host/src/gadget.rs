@@ -2,13 +2,19 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use usb_gadget::function::audio::{Channel, Uac2};
+use usb_gadget::function::Handle;
+use usb_gadget::function::audio::{Channel, Uac1, Uac1Config, Uac2, Uac2Config};
 use usb_gadget::function::hid::Hid;
+use usb_gadget::function::msd::{Lun, Msd};
 use usb_gadget::{Class, Config, Gadget, Id, RegGadget, Strings, Udc, UsbVersion};
 
-use crate::audio::{UAC2_CHANNELS, UAC2_SAMPLE_RATE, UAC2_SAMPLE_SIZE};
-use crate::cli::Args;
+use crate::audio::{
+    USB_AUDIO_CHANNELS, USB_AUDIO_SAMPLE_RATE, USB_AUDIO_SAMPLE_SIZE, USB_AUDIO_VOLUME_MAX_DB_256,
+    USB_AUDIO_VOLUME_MIN_DB_256, USB_AUDIO_VOLUME_RES_DB_256,
+};
+use crate::cli::{Args, UsbAudioClass};
 use crate::hid_report::{HID_REPORT_LEN, report_descriptor};
+use crate::msd::MassStorageController;
 
 #[derive(Debug, Clone)]
 pub struct GadgetConfig {
@@ -19,6 +25,8 @@ pub struct GadgetConfig {
     pub serial: String,
     pub manufacturer: String,
     pub product: String,
+    pub audio_class: UsbAudioClass,
+    pub msd_dir: PathBuf,
 }
 
 impl GadgetConfig {
@@ -31,11 +39,19 @@ impl GadgetConfig {
             serial: args.usb_serial.clone(),
             manufacturer: args.usb_manufacturer.clone(),
             product: args.usb_product.clone(),
+            audio_class: args.usb_audio_class,
+            msd_dir: args.msd_dir.clone(),
         }
     }
 }
 
-pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegGadget> {
+#[derive(Debug)]
+pub struct RegisteredGadget {
+    _registration: RegGadget,
+    pub mass_storage: MassStorageController,
+}
+
+pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegisteredGadget> {
     ensure_configfs()?;
     remove_existing_gadget(config)?;
 
@@ -46,15 +62,20 @@ pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegGadget> {
     hid.report_desc = report_descriptor();
     let (hid, function) = hid.build();
 
-    let channel_mask = (1_u32 << UAC2_CHANNELS) - 1;
-    let (uac2, audio_function) = Uac2::new(
-        Channel::new(channel_mask, UAC2_SAMPLE_RATE, UAC2_SAMPLE_SIZE.into()),
-        Channel::new(0, UAC2_SAMPLE_RATE, UAC2_SAMPLE_SIZE.into()),
-    );
+    let (audio_function, audio_class) = match config.audio_class {
+        UsbAudioClass::Uac1 => (build_uac1(), "UAC1"),
+        UsbAudioClass::Uac2 => (build_uac2(), "UAC2"),
+    };
 
-    let mut usb_config = Config::new("HID + UAC2")
+    let mut lun = Lun::empty();
+    lun.read_only = true;
+    lun.inquiry_string = "NanoKVM Virtual Media".to_owned();
+    let (mass_storage, mass_storage_function) = Msd::builder().with_lun(lun).build();
+
+    let mut usb_config = Config::new(format!("HID + {audio_class} + MSD"))
         .with_function(function)
-        .with_function(audio_function);
+        .with_function(audio_function)
+        .with_function(mass_storage_function);
     usb_config.max_power = 250;
 
     let mut gadget = Gadget::new(
@@ -80,13 +101,87 @@ pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegGadget> {
         hid.device_path()?.display()
     );
     println!(
-        "UAC2 host playback input: {} channels, {} Hz, {}-bit, status {:?}",
-        UAC2_CHANNELS,
-        UAC2_SAMPLE_RATE,
-        u32::from(UAC2_SAMPLE_SIZE) * 8,
-        uac2.status()
+        "{audio_class} host playback input: {} channels, {} Hz, {}-bit",
+        USB_AUDIO_CHANNELS,
+        USB_AUDIO_SAMPLE_RATE,
+        u32::from(USB_AUDIO_SAMPLE_SIZE) * 8,
     );
-    Ok(reg)
+    let mass_storage = MassStorageController::open(
+        mass_storage,
+        find_function_path(reg.path(), "mass_storage")?,
+        config.msd_dir.clone(),
+    )?;
+    Ok(RegisteredGadget {
+        _registration: reg,
+        mass_storage,
+    })
+}
+
+fn find_function_path(gadget: &Path, driver: &str) -> io::Result<PathBuf> {
+    let prefix = format!("{driver}.");
+    std::fs::read_dir(gadget.join("functions"))?
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+        .map(|entry| entry.path())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{driver} function missing"),
+            )
+        })
+}
+
+fn build_uac1() -> Handle {
+    let channel_mask = (1_u32 << USB_AUDIO_CHANNELS) - 1;
+    let mut capture = Uac1Config::default();
+    capture.channel = Channel::new(
+        channel_mask,
+        USB_AUDIO_SAMPLE_RATE,
+        USB_AUDIO_SAMPLE_SIZE.into(),
+    );
+    capture.mute_present = Some(true);
+    capture.volume_present = Some(true);
+    capture.volume_min = Some(USB_AUDIO_VOLUME_MIN_DB_256);
+    capture.volume_max = Some(USB_AUDIO_VOLUME_MAX_DB_256);
+    capture.volume_resolution = Some(USB_AUDIO_VOLUME_RES_DB_256);
+    let mut playback = Uac1Config::default();
+    playback.channel = Channel::new(0, USB_AUDIO_SAMPLE_RATE, USB_AUDIO_SAMPLE_SIZE.into());
+    let (_, function) = Uac1::builder()
+        .with_capture_config(capture)
+        .with_playback_config(playback)
+        .build();
+    function
+}
+
+fn build_uac2() -> Handle {
+    let channel_mask = (1_u32 << USB_AUDIO_CHANNELS) - 1;
+    let mut capture = Uac2Config::default();
+    capture.channel = Channel::new(
+        channel_mask,
+        USB_AUDIO_SAMPLE_RATE,
+        USB_AUDIO_SAMPLE_SIZE.into(),
+    );
+    capture.mute_present = Some(true);
+    capture.volume_present = Some(true);
+    capture.volume_min = Some(USB_AUDIO_VOLUME_MIN_DB_256);
+    capture.volume_max = Some(USB_AUDIO_VOLUME_MAX_DB_256);
+    capture.volume_resolution = Some(USB_AUDIO_VOLUME_RES_DB_256);
+    capture.volume_name = Some("NanoKVM Capture Volume".to_owned());
+    capture.input_terminal_name = Some("NanoKVM USB Input".to_owned());
+    capture.input_terminal_channel_name = Some("NanoKVM Stereo".to_owned());
+    capture.output_terminal_name = Some("NanoKVM Capture".to_owned());
+
+    let mut playback = Uac2Config::default();
+    playback.channel = Channel::new(0, USB_AUDIO_SAMPLE_RATE, USB_AUDIO_SAMPLE_SIZE.into());
+
+    let mut builder = Uac2::builder()
+        .with_capture_config(capture)
+        .with_playback_config(playback);
+    builder.function_name = Some("NanoKVM Audio".to_owned());
+    builder.control_name = Some("NanoKVM Audio Control".to_owned());
+    builder.clock_source_out_name = Some("NanoKVM Audio Clock".to_owned());
+    let (_, function) = builder.build();
+    function
 }
 
 fn ensure_configfs() -> io::Result<()> {

@@ -10,8 +10,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use crate::atx::AtxController;
 use crate::auth::AuthState;
 use crate::browser_stream::BrowserCapture;
+use crate::cli::AudioSettings;
+use crate::hid::UsbGadgetInputSink;
 use crate::pairing_manager::{PairingManager, PendingPairing};
 use crate::session_arbiter::{SessionArbiter, SessionOwner};
 use crate::settings::{MoonlinkSettings, SettingsStore};
@@ -90,10 +93,17 @@ pub async fn serve_web(
     server: ServerController,
     arbiter: SessionArbiter,
     web_v4l2: Option<V4l2Settings>,
+    web_audio: AudioSettings,
+    input_sink: UsbGadgetInputSink,
+    atx: Option<AtxController>,
+    mass_storage: Option<crate::msd::MassStorageController>,
 ) -> std::io::Result<()> {
-    let browser_capture = BrowserCapture::new(arbiter.clone(), settings.clone(), web_v4l2);
+    let browser_capture =
+        BrowserCapture::new(arbiter.clone(), settings.clone(), web_v4l2, web_audio);
+    let pikvm_settings = settings.clone();
+    let pikvm_server = server.clone();
     let state = WebState {
-        auth,
+        auth: auth.clone(),
         settings,
         ip_address,
         pairing_manager,
@@ -113,6 +123,7 @@ pub async fn serve_web(
         )
         .route("/api/system/reboot", post(reboot))
         .route("/api/kvm/stream", get(kvm_stream))
+        .route("/api/kvm/audio", get(kvm_audio))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_authentication,
@@ -135,7 +146,15 @@ pub async fn serve_web(
         .route("/api/login", post(login))
         .route("/api/password/recover", post(recover_password))
         .merge(protected)
-        .with_state(state);
+        .with_state(state)
+        .merge(crate::pikvm::routes(
+            auth.clone(),
+            input_sink,
+            atx,
+            mass_storage,
+            pikvm_settings,
+            pikvm_server,
+        ));
     let listener = tokio::net::TcpListener::bind(bind).await?;
     println!("nanokvm web UI listening: http://{bind}");
     axum::serve(listener, router)
@@ -277,8 +296,16 @@ async fn put_settings(
     };
     let previous = state.settings.get().await;
     let disconnect = settings.changes_stream(&previous);
+    let restart = settings.requires_restart(&previous);
     match state.settings.save(settings).await {
         Ok(()) => {
+            if restart {
+                restart_service();
+                return message(
+                    StatusCode::ACCEPTED,
+                    "settings saved; USB reconnecting; sign in again",
+                );
+            }
             state.server.apply_runtime_config(runtime_config);
             if disconnect {
                 state.server.disconnect_clients().await;
@@ -287,6 +314,16 @@ async fn put_settings(
         }
         Err(err) => message(StatusCode::BAD_REQUEST, &err.to_string()),
     }
+}
+
+fn restart_service() {
+    tokio::spawn(async {
+        tokio::time::sleep(Duration::from_millis(750)).await;
+        let _ = tokio::process::Command::new("systemctl")
+            .args(["--no-block", "restart", "nanokvm-host.service"])
+            .status()
+            .await;
+    });
 }
 
 async fn get_pairing_devices(State(state): State<WebState>) -> Response {
@@ -343,6 +380,10 @@ async fn reboot() -> Response {
 
 async fn kvm_stream(State(state): State<WebState>) -> Response {
     state.browser_capture.stream().await
+}
+
+async fn kvm_audio(State(state): State<WebState>) -> Response {
+    state.browser_capture.audio_stream().await
 }
 
 async fn authenticate(auth: &AuthState, headers: &HeaderMap) -> bool {

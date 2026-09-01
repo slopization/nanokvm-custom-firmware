@@ -36,3 +36,17 @@ fn scroll_units(amount: i16) -> i8 {
         amount.signum() as i8
     }
 }
+
+pub(super) async fn write_web_wheel(sink: &UsbGadgetInputSink, dy: i8) -> std::io::Result<()> {
+    let Some(file) = &sink.hid else {
+        return Ok(());
+    };
+    let buttons = sink.state.lock().await.mouse_buttons;
+    let report = encode_relative_mouse(&RelativeMouseReport {
+        buttons,
+        x: 0,
+        y: 0,
+        wheel: dy,
+    })?;
+    write_report(file, &report).await
+}

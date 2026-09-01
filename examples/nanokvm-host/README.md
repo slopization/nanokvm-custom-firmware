@@ -53,12 +53,24 @@ both with `V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME`.
 `V4L2_CID_MPEG_VIDEO_BITRATE`. When it is omitted, both controls are left at the
 driver's default.
 
-`--setup-usb-gadget` creates one configfs USB gadget with UAC2 and a combined
-HID endpoint on `/dev/hidg0`. Its reports include keyboard, relative mouse,
-absolute mouse, and touchscreen input. If the gadget is already managed
+`--setup-usb-gadget` creates one configfs USB gadget with a combined HID
+endpoint on `/dev/hidg0`, selectable UAC1 or UAC2 audio, and removable mass
+storage. Its HID reports include keyboard, relative mouse, absolute mouse, and
+touchscreen input. UAC1 is the default for PlayStation compatibility; select
+UAC2 in the management UI or use `--usb-audio-class uac2`. Changing the class
+disconnects and re-enumerates the USB gadget, restarts the service, and requires
+signing in to the management UI again. If the gadget is already managed
 elsewhere, omit that option and pass `--hid` explicitly.
 
-Audio defaults to UAC2 capture and is encoded as the packet duration requested
+The PiKVM virtual-media UI stores images under `--msd-dir` (default
+`/var/lib/moonlink/msd`) and leaves the LUN disconnected at startup. Reliable
+bulk transfers on CV1800/CV181x require gadget DMA in the DWC2 platform driver.
+Linux currently forces both `g_dma` and `g_dma_desc` off for this SoC, while the
+vendor kernel enables them. The userspace implementation is complete, but mass
+storage should remain disconnected until that kernel limitation is fixed;
+PIO-mode transfers can starve the single CPU and cause USB re-enumeration.
+
+Audio defaults to USB capture and is encoded as the packet duration requested
 by Moonlight. Use `--audio none` to advertise video only.
 
 ## Management UI
@@ -71,8 +83,9 @@ forgotten password. A recovery code expires after one use.
 Stream and encoder settings are stored in
 `/var/lib/moonlink/settings.json` with mode `0600`. Advertisement changes apply
 immediately. Media changes disconnect the active client and are loaded when the
-next RTSP session opens the V4L2 and ALSA devices; the Rust host does not need to
-restart. The UI authenticates with the system root password, and both normal
+next RTSP session opens the V4L2 and ALSA devices. Changing the USB audio class
+restarts the host service to rebuild the gadget descriptors. The UI
+authenticates with the system root password, and both normal
 password changes and OLED recovery-code changes update the root account through
 `chpasswd`.
 
@@ -108,9 +121,10 @@ sudo ./target/release/nanokvm-host \
 Useful arguments include `--name`, `--pin`, `--bind-http`, `--bind-https`,
 `--bind-rtsp`, `--bind-video`, `--bind-audio`, `--bind-control`,
 `--buffer-count`, `--max-width`, `--max-height`, `--max-fps`,
-`--bitrate-kbps`, `--gop`, `--audio`, `--encryption-mode`,
+`--bitrate-kbps`, `--gop`, `--audio`, `--usb-audio-class`, `--encryption-mode`,
 `--no-repeat-headers`, `--no-aud`,
-`--hid`, `--setup-usb-gadget`, `--udc`, and `--display-transform`.
+`--hid`, `--setup-usb-gadget`, `--msd-dir`, `--udc`, and
+`--display-transform`.
 
 For Linux V4L2 smoke testing with fake devices:
 

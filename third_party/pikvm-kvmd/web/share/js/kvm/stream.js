@@ -29,6 +29,7 @@ import {wm} from "../wm.js";
 import {JanusStreamer} from "./stream_janus.js";
 import {MediaStreamer} from "./stream_media.js";
 import {MjpegStreamer} from "./stream_mjpeg.js";
+import {RawHevcStreamer} from "./stream_raw.js";
 
 
 export function Streamer() {
@@ -267,6 +268,7 @@ export function Streamer() {
 			let sup_webrtc = JanusStreamer.is_webrtc_available();
 			let has_media = (f.h264 && sup_vd); // Don't check sup_h264 for sure
 			let has_janus = (__janus_imported && f.h264 && sup_webrtc); // Same
+			let has_raw_hevc = !!f.hevc;
 
 			tools.info(
 				`Stream: Janus WebRTC state: features.h264=${f.h264},`
@@ -295,9 +297,16 @@ export function Streamer() {
 			tools.feature.setEnabled($("stream-resolution"), f.resolution);
 			tools.feature.setEnabled($("stream-h264-bitrate"), f.h264);
 			tools.feature.setEnabled($("stream-h264-gop"), f.h264);
-			tools.feature.setEnabled($("stream-mode"), f.h264);
+			tools.feature.setEnabled($("stream-mode"), (f.h264 || f.hevc));
+			tools.el.setEnabled($("stream-mode-radio-raw-hevc"), has_raw_hevc);
 
-			let mode = tools.storage.get("stream.mode", "janus");
+			let mode = tools.storage.get("stream.mode", (has_raw_hevc ? "raw-hevc" : "janus"));
+			if (has_raw_hevc && !f.h264) {
+				mode = "raw-hevc";
+			}
+			if (mode === "raw-hevc" && !has_raw_hevc) {
+				mode = "janus";
+			}
 			if (mode === "janus" && !has_janus) {
 				mode = "media";
 			}
@@ -390,6 +399,7 @@ export function Streamer() {
 		switch (mode) {
 			case "janus": cls = JanusStreamer; break;
 			case "media": cls = MediaStreamer; break;
+			case "raw-hevc": cls = RawHevcStreamer; break;
 		}
 		__streamer = new cls(__setActive, __setInactive, __setInfo, __watchHook, __organizeHook);
 		if (__isStreamRequired()) {
@@ -404,9 +414,9 @@ export function Streamer() {
 		let mode = tools.radio.getValue("stream-mode-radio");
 		tools.storage.set("stream.mode", mode);
 		if (mode !== __streamer.getMode()) {
-			tools.hidden.setVisible($("stream-canvas"), (mode === "media"));
+			tools.hidden.setVisible($("stream-canvas"), (mode === "media" || mode === "raw-hevc"));
 			tools.hidden.setVisible($("stream-image"), (mode === "mjpeg"));
-			tools.hidden.setVisible($("stream-video"), (mode === "janus"));
+			tools.hidden.setVisible($("stream-video"), (mode === "janus" || mode === "raw-hevc"));
 			__resetStream(mode);
 		}
 	};
