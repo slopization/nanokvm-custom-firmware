@@ -156,13 +156,13 @@ where
                     let now = tokio::time::Instant::now();
                     let due = next_audio_at.get_or_insert(now);
                     while *due <= now {
-                        if let Some(frame) = session.next_audio().await? {
-                            if let Some(peer) = audio_peer.lock().await.peer() {
-                                send_audio_frame(&audio_socket, peer, &mut audio_packetizer, audio_crypto.as_deref_mut(), frame).await?;
-                                if !logged_audio {
-                                    eprintln!("sent first audio frame to {peer}");
-                                    logged_audio = true;
-                                }
+                        if let Some(frame) = session.next_audio().await?
+                            && let Some(peer) = audio_peer.lock().await.peer()
+                        {
+                            send_audio_frame(&audio_socket, peer, &mut audio_packetizer, audio_crypto.as_deref_mut(), frame).await?;
+                            if !logged_audio {
+                                eprintln!("sent first audio frame to {peer}");
+                                logged_audio = true;
                             }
                         }
                         *due += audio_period;
@@ -265,7 +265,7 @@ async fn send_video_frame(
             )
             .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
             let mut packets = packets.packets;
-            encrypt_video_packets(&mut packets, crypto.as_deref_mut())?;
+            encrypt_video_packets(&mut packets, crypto)?;
             sender.send_packets(peer, &packets).await?;
         }
         VideoFrame::RtpPayload(payload) if mode == VideoMode::RtpPayloads => {
@@ -278,7 +278,7 @@ async fn send_video_frame(
             )
             .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
             let mut packets = packets.packets;
-            encrypt_video_packets(&mut packets, crypto.as_deref_mut())?;
+            encrypt_video_packets(&mut packets, crypto)?;
             sender.send_packets(peer, &packets).await?;
         }
         _ => {

@@ -452,7 +452,7 @@ pub fn output_fps(settings: &V4l2Settings) -> Result<u32, MediaSessionError> {
             "frame divider must be a positive integer".to_owned(),
         ));
     }
-    if settings.capture_fps % settings.frame_divider != 0 {
+    if !settings.capture_fps.is_multiple_of(settings.frame_divider) {
         return Err(MediaSessionError::Provider(format!(
             "capture FPS {} is not divisible by frame divider {}",
             settings.capture_fps, settings.frame_divider

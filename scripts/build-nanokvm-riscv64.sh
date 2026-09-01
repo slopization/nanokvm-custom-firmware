@@ -7,6 +7,7 @@ BIN="${BIN:-nanokvm-host}"
 PACKAGE="${PACKAGE:-nanokvm-host}"
 
 cargo build \
+  --locked \
   --package "$PACKAGE" \
   --bin "$BIN" \
   --target "$TARGET" \

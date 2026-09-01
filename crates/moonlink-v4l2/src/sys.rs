@@ -201,22 +201,26 @@ pub(crate) struct v4l2_format {
 impl v4l2_format {
     pub(crate) fn from_pixel_format(buffer_type: BufferType, format: PixelFormat) -> Self {
         if buffer_type.is_multiplanar() {
-            let mut pix_mp = v4l2_pix_format_mplane::default();
-            pix_mp.width = format.size.width;
-            pix_mp.height = format.size.height;
-            pix_mp.pixelformat = format.fourcc.0;
-            pix_mp.field = format.field.raw();
-            pix_mp.num_planes = format.num_planes.max(1);
+            let pix_mp = v4l2_pix_format_mplane {
+                width: format.size.width,
+                height: format.size.height,
+                pixelformat: format.fourcc.0,
+                field: format.field.raw(),
+                num_planes: format.num_planes.max(1),
+                ..Default::default()
+            };
             Self {
                 type_: buffer_type.raw(),
                 fmt: v4l2_format_union { pix_mp },
             }
         } else {
-            let mut pix = v4l2_pix_format::default();
-            pix.width = format.size.width;
-            pix.height = format.size.height;
-            pix.pixelformat = format.fourcc.0;
-            pix.field = format.field.raw();
+            let pix = v4l2_pix_format {
+                width: format.size.width,
+                height: format.size.height,
+                pixelformat: format.fourcc.0,
+                field: format.field.raw(),
+                ..Default::default()
+            };
             Self {
                 type_: buffer_type.raw(),
                 fmt: v4l2_format_union { pix },

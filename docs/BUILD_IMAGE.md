@@ -18,8 +18,8 @@ does not install either the LicheeRV Nano or Milk-V Duo U-Boot package.
 
 - Partition 1: FAT firmware partition, mounted at `/boot/firmware`.
 - Partition 2: Btrfs root filesystem.
-- Rootfs overlay: board configuration, Sodo repository key/source, module load
-  order, and `nanokvm-host.service`.
+- Rootfs overlay: board configuration, Sodo repository key/source, and module
+  load order. The service unit is installed from `deploy/systemd/`.
 - Root account: locked in the image; there is no default password.
 - SSH: root password login is enabled, but remains unusable while root is
   locked. OLED recovery establishes the first password.
@@ -110,13 +110,15 @@ images/nanokvm/rootfs-overlay/
 ├── etc/initramfs-tools/
 ├── etc/kernel/cmdline
 ├── etc/modules-load.d/moonlink-camera.conf
-├── etc/systemd/system/nanokvm-host.service
 └── usr/share/keyrings/sodo-repo.asc
 ```
 
 To customize the image, add files under this tree using their final absolute
 paths. Do not put credentials, pairing data, private keys, or a root password
 in the overlay.
+
+The image builder installs the canonical service unit from
+`deploy/systemd/nanokvm-host.service`; development installs use the same file.
 
 ## Installed hardware packages
 

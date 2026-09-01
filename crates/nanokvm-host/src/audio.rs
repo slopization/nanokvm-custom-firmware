@@ -174,7 +174,7 @@ impl OpusAudioGenerator {
         let mut packet = vec![0; MAX_OPUS_PACKET_SIZE];
         let size = self
             .encoder
-            .encode(&samples, &mut packet)
+            .encode(samples, &mut packet)
             .map_err(|err| provider_error(format!("encoding Opus: {err}")))?;
         packet.truncate(size);
         let frame = create_audio_frame(packet, self.timestamp_48khz, self.frame_samples);

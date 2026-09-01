@@ -3,11 +3,13 @@ name = "basic-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+publish = false
 
 [dependencies]
 async-trait.workspace = true
 bytes.workspace = true
-moonlink-core = { path = "../../crates/moonlink-core" }
-moonlink-protocol = { path = "../../crates/moonlink-protocol" }
-moonlink-tokio = { path = "../../crates/moonlink-tokio" }
+moonlink-core.workspace = true
+moonlink-protocol.workspace = true
+moonlink-tokio.workspace = true
 tokio.workspace = true

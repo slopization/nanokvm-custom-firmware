@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 OVERLAY="$SCRIPT_DIR/rootfs-overlay"
+SERVICE="$REPO_ROOT/deploy/systemd/nanokvm-host.service"
 OUTPUT_DIR=${OUTPUT_DIR:-"$REPO_ROOT/dist"}
 IMAGE_NAME=${IMAGE_NAME:-moonlink-nanokvm-debian.img}
 IMAGE="$OUTPUT_DIR/$IMAGE_NAME"
@@ -76,6 +77,10 @@ if [[ ! -x "$BINARY" ]]; then
     echo "cross-built host binary not found: $BINARY" >&2
     exit 1
 fi
+if [[ ! -f "$SERVICE" ]]; then
+    echo "systemd service not found: $SERVICE" >&2
+    exit 1
+fi
 
 install -d "$OUTPUT_DIR"
 ROOT_MNT=$(mktemp -d /tmp/moonlink-image.XXXXXX)
@@ -126,6 +131,7 @@ chroot "$ROOT_MNT" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -
     i2c-tools
 
 install -Dm0755 "$BINARY" "$ROOT_MNT/usr/local/bin/nanokvm-host"
+install -Dm0644 "$SERVICE" "$ROOT_MNT/etc/systemd/system/nanokvm-host.service"
 install -d -m0700 "$ROOT_MNT/var/lib/moonlink"
 systemctl --root="$ROOT_MNT" enable nanokvm-host.service
 

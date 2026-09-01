@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  riscv64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu
+      - name: Install Rust target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add riscv64gc-unknown-linux-gnu
+      - name: Verify release version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cargo pkgid -p nanokvm-host | sed 's/.*[#@]//')
+          test "$TAG" = "v$version"
+      - name: Build NanoKVM host
+        run: ./scripts/build-nanokvm-riscv64.sh
+      - name: Assemble release archive
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="nanokvm-host-${TAG}-riscv64gc-linux-gnu"
+          install -Dm0755 target/riscv64gc-unknown-linux-gnu/release/nanokvm-host "$archive/nanokvm-host"
+          install -Dm0644 deploy/systemd/nanokvm-host.service "$archive/nanokvm-host.service"
+          install -Dm0644 crates/nanokvm-host/README.md "$archive/README.md"
+          install -Dm0644 docs/USER_GUIDE.md "$archive/USER_GUIDE.md"
+          install -Dm0644 SECURITY.md "$archive/SECURITY.md"
+          install -Dm0644 LICENSE "$archive/LICENSE"
+          tar -cJf "$archive.tar.xz" "$archive"
+          sha256sum "$archive.tar.xz" > "$archive.tar.xz.sha256"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="nanokvm-host-${TAG}-riscv64gc-linux-gnu"
+          gh release create "$TAG" --generate-notes \
+            "$archive.tar.xz" \
+            "$archive.tar.xz.sha256"

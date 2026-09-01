@@ -4,8 +4,15 @@ members = [
     "crates/moonlink-core",
     "crates/moonlink-tokio",
     "crates/moonlink-v4l2",
+    "crates/nanokvm-host",
     "examples/basic-server",
-    "examples/nanokvm-host",
+]
+default-members = [
+    "crates/moonlink-protocol",
+    "crates/moonlink-core",
+    "crates/moonlink-tokio",
+    "crates/moonlink-v4l2",
+    "crates/nanokvm-host",
 ]
 resolver = "3"
 
@@ -13,6 +20,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+repository = "https://github.com/djdisodo/nanokvm-custom-firmware"
 
 [workspace.dependencies]
 async-trait = "0.1"
@@ -21,17 +29,27 @@ audiopus_sys = { version = "0.2.2", features = ["static"] }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 drm = "0.14"
+gpiocdev = "0.8"
 hex = "0.4"
 hidreport = "0.6.0"
 libc = "0.2"
+mime_guess = "2.0"
+moonlink-core = { version = "0.1.0", path = "crates/moonlink-core" }
+moonlink-protocol = { version = "0.1.0", path = "crates/moonlink-protocol" }
+moonlink-tokio = { version = "0.1.0", path = "crates/moonlink-tokio" }
+moonlink-v4l2 = { version = "0.1.0", path = "crates/moonlink-v4l2" }
+openssl = { version = "0.10", features = ["vendored"] }
 oxideav-bitstream = "0.0.2"
 oxideav-core = "0.1.30"
 opus = "0.3.1"
 quinn-udp = { version = "0.6.1", default-features = false }
 rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
+rust-embed = "8.12"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tokio-enet = "0.1.1"
 usb-gadget = "1.2.0"
 usbd-hid = "0.10.0"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -41,3 +59,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 ssmarshal = "1.0.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

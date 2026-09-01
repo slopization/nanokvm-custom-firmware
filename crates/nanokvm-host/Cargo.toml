@@ -3,6 +3,10 @@ name = "nanokvm-host"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "NanoKVM PCIe Moonlight and browser KVM host"
+readme = "README.md"
+publish = false
 
 [dependencies]
 async-trait.workspace = true
@@ -12,19 +16,19 @@ bytes.workspace = true
 clap.workspace = true
 drm.workspace = true
 hex.workspace = true
-gpiocdev = "0.8"
+gpiocdev.workspace = true
 hidreport.workspace = true
 libc.workspace = true
-mime_guess = "2.0"
-moonlink-core = { path = "../../crates/moonlink-core" }
-moonlink-protocol = { path = "../../crates/moonlink-protocol" }
-moonlink-tokio = { path = "../../crates/moonlink-tokio" }
-moonlink-v4l2 = { path = "../../crates/moonlink-v4l2" }
+mime_guess.workspace = true
+moonlink-core.workspace = true
+moonlink-protocol.workspace = true
+moonlink-tokio.workspace = true
+moonlink-v4l2.workspace = true
 oxideav-bitstream.workspace = true
 opus.workspace = true
 rand.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
-rust-embed = "8.12"
+reqwest.workspace = true
+rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ssmarshal.workspace = true

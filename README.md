@@ -18,7 +18,7 @@ captures target audio through UAC2.
 - [Build the NanoKVM image](docs/BUILD_IMAGE.md)
 - [Install and use the image](docs/USER_GUIDE.md)
 - [Security limitations](SECURITY.md)
-- [NanoKVM host development notes](examples/nanokvm-host/README.md)
+- [NanoKVM host development notes](crates/nanokvm-host/README.md)
 
 ## Workspace
 
@@ -28,8 +28,8 @@ captures target audio through UAC2.
   video, and audio server implementation.
 - `moonlink-v4l2`: asynchronous V4L2 queue and DMABUF support.
 - `basic-server`: synthetic external-stream example.
-- `nanokvm-host`: V4L2, Wave420L, UAC2, combined HID, OLED, and management UI
-  integration.
+- `nanokvm-host`: production NanoKVM PCIe daemon with V4L2, Wave420L,
+  USB audio, combined HID, OLED, and management UI integration.
 
 ## Development
 

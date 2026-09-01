@@ -125,25 +125,24 @@ where
             }
             "SETUP" => {
                 let stream_kind = detect_stream_kind(&request.target);
-                if matches!(stream_kind, Some("video" | "audio")) {
-                    if let Some(port) = request
+                if matches!(stream_kind, Some("video" | "audio"))
+                    && let Some(port) = request
                         .headers
                         .get("transport")
                         .and_then(|transport| parse_client_port(transport))
-                    {
-                        eprintln!(
-                            "rtsp setup {:?}: transport={:?} client_port={port}",
-                            stream_kind,
-                            request.headers.get("transport")
-                        );
-                        let stream_peer = match stream_kind {
-                            Some("audio") => &audio_peer,
-                            _ => &video_peer,
-                        };
-                        let peer = SocketAddr::new(peer.ip(), port);
-                        stream_peer.lock().await.set_from_rtsp(peer);
-                        eprintln!("rtsp setup {:?}: peer={peer}", stream_kind);
-                    }
+                {
+                    eprintln!(
+                        "rtsp setup {:?}: transport={:?} client_port={port}",
+                        stream_kind,
+                        request.headers.get("transport")
+                    );
+                    let stream_peer = match stream_kind {
+                        Some("audio") => &audio_peer,
+                        _ => &video_peer,
+                    };
+                    let peer = SocketAddr::new(peer.ip(), port);
+                    stream_peer.lock().await.set_from_rtsp(peer);
+                    eprintln!("rtsp setup {:?}: peer={peer}", stream_kind);
                 }
                 response
                     .headers
@@ -175,8 +174,9 @@ where
                         );
                     } else {
                         let (session_shutdown_tx, session_shutdown_rx) = watch::channel(false);
-                        let media_encryption =
-                            media_encryption.expect("mandatory media encryption was validated");
+                        let Some(media_encryption) = media_encryption else {
+                            unreachable!("mandatory media encryption was validated");
+                        };
                         let session_config = MediaSessionConfig {
                             session_id: MediaSessionId::new(),
                             app_id: 1,

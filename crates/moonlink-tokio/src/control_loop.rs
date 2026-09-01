@@ -30,10 +30,13 @@ pub(crate) async fn serve_control(
     loop {
         tokio::select! {
             result = host.service(Duration::from_millis(20)) => {
-                if let Some(event) = result.map_err(|err| ServerError::InvalidConfig(err.to_string()))? {
-                    if let Err(err) = process_control_event(&mut host, input_sink.as_ref(), &control_crypto, &video_control, &stream_stop, &mut decode_failures, event).await {
-                        eprintln!("control event failed: {err}");
-                    }
+                let Some(event) = result
+                    .map_err(|err| ServerError::InvalidConfig(err.to_string()))?
+                else {
+                    continue;
+                };
+                if let Err(err) = process_control_event(&mut host, input_sink.as_ref(), &control_crypto, &video_control, &stream_stop, &mut decode_failures, event).await {
+                    eprintln!("control event failed: {err}");
                 }
             }
             command = commands.recv() => {

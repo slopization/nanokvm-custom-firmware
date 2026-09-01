@@ -263,10 +263,8 @@ async fn authenticate_login(auth: &AuthState, form: &LoginForm) -> Result<String
     if let Some(otp) = form.otp.as_deref().filter(|otp| !otp.is_empty()) {
         match auth.recover_password(otp, &form.passwd).await {
             Ok(Some(token)) => Ok(token),
-            Ok(None) => return Err(StatusCode::FORBIDDEN.into_response()),
-            Err(error) => {
-                return Err((StatusCode::BAD_REQUEST, error.to_string()).into_response());
-            }
+            Ok(None) => Err(StatusCode::FORBIDDEN.into_response()),
+            Err(error) => Err((StatusCode::BAD_REQUEST, error.to_string()).into_response()),
         }
     } else {
         let Some(token) = auth.authenticate_password(&form.passwd).await else {
@@ -327,9 +325,13 @@ async fn websocket_session(mut socket: WebSocket, state: PikvmState) {
             message = socket.recv() => {
                 let Some(Ok(message)) = message else { break; };
                 match message {
-                    Message::Binary(data) if data.first() == Some(&0) => {
-                        if socket.send(Message::Binary(vec![255].into())).await.is_err() { break; }
-                    }
+                    Message::Binary(data) if data.first() == Some(&0) => match socket
+                        .send(Message::Binary(vec![255].into()))
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(_) => break,
+                    },
                     Message::Binary(data) => {
                         if let Err(error) = handle_hid(&state.hid, &data).await {
                             eprintln!("PiKVM HID event failed: {error}");

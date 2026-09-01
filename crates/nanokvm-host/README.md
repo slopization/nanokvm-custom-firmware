@@ -1,13 +1,14 @@
-# NanoKVM Test Host
+# NanoKVM Host
 
 > [!WARNING]
 > This host is experimental. Stream encryption is configurable, but the
 > management UI uses plaintext HTTP. See [`SECURITY.md`](../../SECURITY.md).
 
-This example exposes a Moonlight/Sunshine-compatible host while leaving capture,
-DMA, and HEVC encoding selectable at the edge. The native path configures V4L2
-capture and encoder devices directly; the command path accepts Annex-B HEVC from
-stdout for testing.
+This workspace crate provides the production NanoKVM PCIe daemon. It exposes a
+Moonlight-compatible host and a browser KVM while leaving capture, DMA, and HEVC
+encoding selectable at the edge. The native path configures V4L2 capture and
+encoder devices directly; the command path accepts Annex-B HEVC from stdout for
+testing.
 
 ```sh
 cargo build --release -p nanokvm-host
@@ -108,7 +109,7 @@ Install `nanokvm-host.service` in `/etc/systemd/system` and enable it so the
 host returns after a reboot:
 
 ```sh
-sudo install -m 0644 examples/nanokvm-host/nanokvm-host.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/nanokvm-host.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now nanokvm-host.service
 ```
@@ -132,7 +133,7 @@ Useful arguments include `--name`, `--pin`, `--bind-http`, `--bind-https`,
 For Linux V4L2 smoke testing with fake devices:
 
 ```sh
-sudo ./examples/nanokvm-host/setup-v4l2-test-devices.sh
+sudo ./crates/nanokvm-host/setup-v4l2-test-devices.sh
 cargo run -p nanokvm-host --bin v4l2-smoke -- \
   --capture-device /dev/videoX \
   --codec-device /dev/videoY \

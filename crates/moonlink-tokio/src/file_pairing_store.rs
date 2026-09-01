@@ -147,10 +147,10 @@ fn normalize_client_ids(state: &mut StoredPairingState) -> bool {
     let previous = std::mem::take(&mut state.clients);
     let mut changed = false;
     for (key, mut client) in previous {
-        if let Ok(certificate) = X509::from_pem(&client.certificate_der) {
-            if let Ok(certificate_der) = certificate.to_der() {
-                client.certificate_der = certificate_der;
-            }
+        if let Ok(certificate) = X509::from_pem(&client.certificate_der)
+            && let Ok(certificate_der) = certificate.to_der()
+        {
+            client.certificate_der = certificate_der;
         }
         let id = client_id_from_certificate(&client.certificate_der);
         changed |= key != id || client.id != id;

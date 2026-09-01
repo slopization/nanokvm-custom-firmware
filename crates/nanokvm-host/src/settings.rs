@@ -116,7 +116,7 @@ impl MoonlinkSettings {
     }
 
     pub fn runtime_config(&self) -> Result<ServerRuntimeConfig, &'static str> {
-        if self.advertised_fps % self.frame_divider != 0 {
+        if !self.advertised_fps.is_multiple_of(self.frame_divider) {
             return Err("capture FPS must be divisible by the frame divider");
         }
         let video = vec![match self.codec {
@@ -154,7 +154,7 @@ impl MoonlinkSettings {
         if self.frame_divider == 0 {
             return Err("frame divider must be at least 1");
         }
-        if self.advertised_fps % self.frame_divider != 0 {
+        if !self.advertised_fps.is_multiple_of(self.frame_divider) {
             return Err("capture FPS must be divisible by the frame divider");
         }
         if self.gop == 0 {
