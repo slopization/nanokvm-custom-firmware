@@ -47,7 +47,7 @@ impl AuthState {
     }
 
     #[cfg(test)]
-    fn with_password(password: &str) -> Self {
+    pub(crate) fn with_password(password: &str) -> Self {
         Self {
             otp: Arc::new(Mutex::new(None)),
             sessions: Arc::new(Mutex::new(HashMap::new())),

@@ -242,20 +242,9 @@ async fn auth_check(State(state): State<PikvmState>, headers: HeaderMap) -> Stat
 }
 
 async fn auth_login(State(state): State<PikvmState>, Form(form): Form<LoginForm>) -> Response {
-    if form.user != "root" {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let token = if let Some(otp) = form.otp.as_deref().filter(|otp| !otp.is_empty()) {
-        match state.auth.recover_password(otp, &form.passwd).await {
-            Ok(Some(token)) => token,
-            Ok(None) => return StatusCode::FORBIDDEN.into_response(),
-            Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
-        }
-    } else {
-        let Some(token) = state.auth.authenticate_password(&form.passwd).await else {
-            return StatusCode::FORBIDDEN.into_response();
-        };
-        token
+    let token = match authenticate_login(&state.auth, &form).await {
+        Ok(token) => token,
+        Err(response) => return response,
     };
     let mut response = StatusCode::OK.into_response();
     let cookie =
@@ -265,6 +254,26 @@ async fn auth_login(State(state): State<PikvmState>, Form(form): Form<LoginForm>
         HeaderValue::from_str(&cookie).expect("valid session cookie"),
     );
     response
+}
+
+async fn authenticate_login(auth: &AuthState, form: &LoginForm) -> Result<String, Response> {
+    if form.user != "root" {
+        return Err(StatusCode::FORBIDDEN.into_response());
+    }
+    if let Some(otp) = form.otp.as_deref().filter(|otp| !otp.is_empty()) {
+        match auth.recover_password(otp, &form.passwd).await {
+            Ok(Some(token)) => Ok(token),
+            Ok(None) => return Err(StatusCode::FORBIDDEN.into_response()),
+            Err(error) => {
+                return Err((StatusCode::BAD_REQUEST, error.to_string()).into_response());
+            }
+        }
+    } else {
+        let Some(token) = auth.authenticate_password(&form.passwd).await else {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        };
+        Ok(token)
+    }
 }
 
 async fn auth_logout(State(state): State<PikvmState>, headers: HeaderMap) -> Response {
@@ -956,4 +965,45 @@ fn session_token(headers: &HeaderMap) -> Option<&str> {
         .split(';')
         .map(str::trim)
         .find_map(|cookie| cookie.strip_prefix("moonlink_session="))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn login(password: &str, otp: Option<String>) -> LoginForm {
+        LoginForm {
+            user: "root".to_owned(),
+            passwd: password.to_owned(),
+            otp,
+            _expire: Some(0),
+        }
+    }
+
+    #[tokio::test]
+    async fn login_supports_password_and_oled_recovery() {
+        let auth = AuthState::with_password("old-password");
+        assert!(
+            authenticate_login(&auth, &login("old-password", None))
+                .await
+                .is_ok()
+        );
+
+        let otp = auth.issue_otp().await;
+        assert!(
+            authenticate_login(&auth, &login("new-password", Some(otp)))
+                .await
+                .is_ok()
+        );
+        assert!(
+            authenticate_login(&auth, &login("old-password", None))
+                .await
+                .is_err()
+        );
+        assert!(
+            authenticate_login(&auth, &login("new-password", None))
+                .await
+                .is_ok()
+        );
+    }
 }
