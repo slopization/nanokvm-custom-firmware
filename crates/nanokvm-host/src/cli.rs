@@ -73,7 +73,7 @@ pub struct Args {
     pub max_height: u32,
     #[arg(long, default_value_t = 60)]
     pub max_fps: u32,
-    #[arg(long)]
+    #[arg(long, default_value = "1000")]
     pub bitrate_kbps: Option<u32>,
     #[arg(long, default_value_t = 30)]
     pub gop: u32,

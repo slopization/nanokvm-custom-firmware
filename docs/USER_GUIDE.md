@@ -78,7 +78,8 @@ supported. Revoke old clients from **Moonlight devices**.
 The Web UI can change the advertised mode, codec settings, GOP, bitrate control,
 and FEC. Settings are stored in `/var/lib/moonlink/settings.json`.
 
-- Leave bitrate control unset to retain the encoder driver's automatic mode.
+- Video bitrate defaults to 1000 kbps. Clear it to retain the encoder driver's
+  automatic mode.
 - Video FEC defaults to zero to reduce CPU use and latency.
 - Stream-setting changes disconnect the active Moonlight session and take
   effect on the next connection.

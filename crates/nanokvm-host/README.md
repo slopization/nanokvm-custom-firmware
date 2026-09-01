@@ -49,10 +49,10 @@ command path.
 invalidation messages are distinct in `moonlink-core`, but this host handles
 both with `V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME`.
 
-`--bitrate-kbps` is optional. When it is set, the host enables
-`V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE` and writes
-`V4L2_CID_MPEG_VIDEO_BITRATE`. When it is omitted, both controls are left at the
-driver's default.
+Video bitrate defaults to 1000 kbps. When `--bitrate-kbps` is set, the host
+enables `V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE` and writes
+`V4L2_CID_MPEG_VIDEO_BITRATE`. Clearing the bitrate in the management UI leaves
+both controls at the encoder driver's default.
 
 `--setup-usb-gadget` creates one configfs USB gadget with a combined HID
 endpoint on `/dev/hidg0`, selectable UAC1 or UAC2 audio, and removable mass

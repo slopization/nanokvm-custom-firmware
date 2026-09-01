@@ -245,6 +245,13 @@ mod tests {
     }
 
     #[test]
+    fn defaults_video_bitrate_to_1000_kbps() {
+        let args = Args::parse_from(["nanokvm-host"]);
+        assert_eq!(args.bitrate_kbps, Some(1000));
+        assert_eq!(MoonlinkSettings::from_args(&args).bitrate_kbps, Some(1000));
+    }
+
+    #[test]
     fn defaults_missing_encryption_mode_to_opportunistic() {
         let args = Args::parse_from(["nanokvm-host"]);
         let settings = MoonlinkSettings::from_args(&args);
