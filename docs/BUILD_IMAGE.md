@@ -21,6 +21,8 @@ does not install either the LicheeRV Nano or Milk-V Duo U-Boot package.
 - Rootfs overlay: board configuration, Sodo repository key/source, module load
   order, and `nanokvm-host.service`.
 - Root account: locked in the image; there is no default password.
+- SSH: root password login is enabled, but remains unusable while root is
+  locked. OLED recovery establishes the first password.
 
 The NanoKVM U-Boot package supplies `fip.bin` and distroboot configuration. The
 CV181x kernel package supplies the NanoKVM PCIe device tree, including HDMI

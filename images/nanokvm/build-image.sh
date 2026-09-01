@@ -165,6 +165,17 @@ if [[ $ROOT_PASSWORD_FIELD != '!'* && $ROOT_PASSWORD_FIELD != '*'* ]]; then
     echo "root account is not locked" >&2
     exit 1
 fi
+install -d "$ROOT_MNT/run/sshd"
+SSHD_CONFIG=$(chroot "$ROOT_MNT" /usr/sbin/sshd -T \
+    -C user=root,host=localhost,addr=127.0.0.1)
+if ! grep -qx 'permitrootlogin yes' <<<"$SSHD_CONFIG"; then
+    echo "sshd does not allow root login after password recovery" >&2
+    exit 1
+fi
+if ! grep -qx 'passwordauthentication yes' <<<"$SSHD_CONFIG"; then
+    echo "sshd does not allow password authentication" >&2
+    exit 1
+fi
 
 sync
 unmount_chroot_filesystems

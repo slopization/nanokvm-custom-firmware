@@ -52,6 +52,15 @@ The code is single-use. Disconnect and reconnect USB to request another code.
 Because this page is HTTP, anyone observing the network can potentially read
 the code and password.
 
+After setting the password, SSH is available as `root` using the same password:
+
+```sh
+ssh root@DEVICE-IP
+```
+
+There is no default SSH password, and the locked factory account cannot log in
+before password recovery completes.
+
 ## Pair Moonlight
 
 1. Install Moonlight on the client.
