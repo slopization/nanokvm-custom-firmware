@@ -85,7 +85,7 @@ impl UsbGadgetInputSink {
         mouse::write_web_button(self, button, pressed).await
     }
 
-    pub async fn write_web_absolute(&self, x: u16, y: u16) -> std::io::Result<()> {
+    pub async fn write_web_absolute(&self, x: i16, y: i16) -> std::io::Result<()> {
         mouse::write_web_absolute(self, x, y).await
     }
 

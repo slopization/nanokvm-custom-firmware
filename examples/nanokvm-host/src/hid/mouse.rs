@@ -102,17 +102,15 @@ pub(super) async fn write_web_button(
 
 pub(super) async fn write_web_absolute(
     sink: &UsbGadgetInputSink,
-    x: u16,
-    y: u16,
+    x: i16,
+    y: i16,
 ) -> std::io::Result<()> {
     let Some(file) = &sink.hid else {
         return Ok(());
     };
     let mut state = sink.state.lock().await;
-    state.pointer_x = (u32::from(x) * u32::from(crate::hid_report::POINTER_AXIS_MAX)
-        / u32::from(u16::MAX)) as u16;
-    state.pointer_y = (u32::from(y) * u32::from(crate::hid_report::POINTER_AXIS_MAX)
-        / u32::from(u16::MAX)) as u16;
+    state.pointer_x = web_axis_to_hid(x);
+    state.pointer_y = web_axis_to_hid(y);
     state.pointer_mode = PointerMode::Absolute;
     let report = encode_absolute_pointer(&AbsolutePointerReport {
         buttons: state.mouse_buttons,
@@ -121,6 +119,12 @@ pub(super) async fn write_web_absolute(
     })?;
     drop(state);
     write_report(file, &report).await
+}
+
+fn web_axis_to_hid(value: i16) -> u16 {
+    let unsigned = i64::from(value) - i64::from(i16::MIN);
+    ((unsigned * i64::from(crate::hid_report::POINTER_AXIS_MAX) + i64::from(u16::MAX) / 2)
+        / i64::from(u16::MAX)) as u16
 }
 
 pub(super) async fn write_web_relative(
@@ -133,4 +137,19 @@ pub(super) async fn write_web_relative(
         dy: i16::from(dy),
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_pikvm_signed_absolute_axis_to_hid_axis() {
+        assert_eq!(web_axis_to_hid(i16::MIN), 0);
+        assert_eq!(web_axis_to_hid(0), 16_384);
+        assert_eq!(
+            web_axis_to_hid(i16::MAX),
+            crate::hid_report::POINTER_AXIS_MAX
+        );
+    }
 }

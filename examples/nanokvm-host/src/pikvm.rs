@@ -420,8 +420,8 @@ async fn handle_hid(hid: &UsbGadgetInputSink, data: &[u8]) -> std::io::Result<()
         }
         Some(3) if data.len() == 5 => {
             hid.write_web_absolute(
-                u16::from_be_bytes([data[1], data[2]]),
-                u16::from_be_bytes([data[3], data[4]]),
+                i16::from_be_bytes([data[1], data[2]]),
+                i16::from_be_bytes([data[3], data[4]]),
             )
             .await?;
         }
