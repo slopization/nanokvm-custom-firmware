@@ -2,7 +2,6 @@
 .idea/
 /build/
 /dist/*
-!/dist/moonlink-nanokvm-debian.img.xz
 !/dist/moonlink-nanokvm-debian.img.sha256
 /images/nanokvm/*.img
 /images/nanokvm/*.img.xz
