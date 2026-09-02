@@ -33,6 +33,14 @@ captures target audio through UAC2.
 
 ## Development
 
+Clone with the PiKVM frontend submodule, or initialize it in an existing
+checkout:
+
+```sh
+git clone --recurse-submodules https://github.com/djdisodo/nanokvm-custom-firmware.git
+git submodule update --init --recursive
+```
+
 Install a current stable Rust toolchain, then run:
 
 ```sh

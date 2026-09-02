@@ -1,0 +1,4 @@
+[submodule "third_party/pikvm-kvmd"]
+	path = third_party/pikvm-kvmd
+	url = https://github.com/djdisodo/nanokvm-pikvm-frontend.git
+	branch = main
