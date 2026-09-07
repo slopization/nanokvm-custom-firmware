@@ -436,9 +436,15 @@ fn prepare_control_context(
         let mut new_context =
             CipherCtx::new().map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
         if encrypt {
-            new_context.encrypt_init(Some(Cipher::aes_128_gcm()), Some(key), Some(iv))
+            new_context
+                .encrypt_init(Some(Cipher::aes_128_gcm()), None, None)
+                .and_then(|_| new_context.set_iv_length(iv.len()))
+                .and_then(|_| new_context.encrypt_init(None, Some(key), Some(iv)))
         } else {
-            new_context.decrypt_init(Some(Cipher::aes_128_gcm()), Some(key), Some(iv))
+            new_context
+                .decrypt_init(Some(Cipher::aes_128_gcm()), None, None)
+                .and_then(|_| new_context.set_iv_length(iv.len()))
+                .and_then(|_| new_context.decrypt_init(None, Some(key), Some(iv)))
         }
         .map_err(|err| ServerError::InvalidConfig(err.to_string()))?;
         new_context.set_padding(false);
@@ -490,6 +496,8 @@ fn read_u64_low_le(data: &[u8], offset: usize) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::RiKeyMaterial;
+    use openssl::symm::Cipher as SymmetricCipher;
 
     #[test]
     fn parses_idr_request_packets() {
@@ -552,5 +560,92 @@ mod tests {
             .unwrap();
             assert_eq!(decrypted, plaintext);
         }
+    }
+
+    #[test]
+    fn decrypts_reference_moonlight_v2_control_packet() {
+        let key = [0x3c; 16];
+        let plaintext = [0x05, 0x03, 0x02, 0x00, 0x00, 0x00];
+        let packet = reference_client_encrypted_control_packet(&key, 0, &plaintext);
+        let mut state = ControlCryptoState::new(RiKeyMaterial::new(key, 0x1020_3040));
+
+        let decoded = decrypt_control_packet(&packet, &mut state).unwrap();
+
+        assert_eq!(decoded, [0x05, 0x03, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn decrypts_sequence_numbers_from_little_endian_wire_bytes() {
+        let key = [0x6d; 16];
+        let sequence = 0x0102_0304;
+        let plaintext = [0x06, 0x02, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00];
+        let packet = reference_client_encrypted_control_packet(&key, sequence, &plaintext);
+        let mut state = ControlCryptoState::new(RiKeyMaterial::new(key, 0x1020_3040));
+
+        let decoded = decrypt_control_packet(&packet, &mut state).unwrap();
+
+        assert_eq!(decoded, [0x06, 0x02, 0x04, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn decrypts_legacy_moonlight_control_packet() {
+        let key = [0x6a; 16];
+        let sequence = 0x0102_0304;
+        let plaintext = [0x05, 0x03, 0x02, 0x00, 0x00, 0x00];
+        let packet = reference_client_encrypted_control_packet_legacy(&key, sequence, &plaintext);
+        let mut state = ControlCryptoState::new(RiKeyMaterial::new(key, 0x1020_3040));
+
+        let decoded = decrypt_control_packet(&packet, &mut state).unwrap();
+
+        assert_eq!(decoded, [0x05, 0x03, 0x00, 0x00]);
+    }
+
+    fn reference_client_encrypted_control_packet(
+        key: &[u8; 16],
+        sequence: u32,
+        plaintext: &[u8],
+    ) -> Vec<u8> {
+        let mut iv = [0_u8; 12];
+        iv[..4].copy_from_slice(&sequence.to_le_bytes());
+        iv[10] = b'C';
+        iv[11] = b'C';
+        reference_client_encrypted_control_packet_with_iv(key, sequence, plaintext, &iv)
+    }
+
+    fn reference_client_encrypted_control_packet_legacy(
+        key: &[u8; 16],
+        sequence: u32,
+        plaintext: &[u8],
+    ) -> Vec<u8> {
+        let mut iv = [0_u8; 16];
+        iv[0] = sequence as u8;
+        reference_client_encrypted_control_packet_with_iv(key, sequence, plaintext, &iv)
+    }
+
+    fn reference_client_encrypted_control_packet_with_iv(
+        key: &[u8; 16],
+        sequence: u32,
+        plaintext: &[u8],
+        iv: &[u8],
+    ) -> Vec<u8> {
+        let mut tag = [0_u8; 16];
+        let ciphertext = openssl::symm::encrypt_aead(
+            SymmetricCipher::aes_128_gcm(),
+            key,
+            Some(iv),
+            &[],
+            plaintext,
+            &mut tag,
+        )
+        .unwrap();
+        let length = u16::try_from(4 + tag.len() + ciphertext.len()).unwrap();
+
+        let mut packet = Vec::with_capacity(4 + usize::from(length));
+        packet.extend_from_slice(&ENCRYPTED_CONTROL_PACKET_TYPE.to_le_bytes());
+        packet.extend_from_slice(&length.to_le_bytes());
+        packet.extend_from_slice(&sequence.to_le_bytes());
+        packet.extend_from_slice(&tag);
+        packet.extend_from_slice(&ciphertext);
+        packet
     }
 }

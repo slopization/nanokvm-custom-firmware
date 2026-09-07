@@ -47,7 +47,9 @@ impl ServerConfig {
             capabilities,
             input_backpressure: BackpressurePolicy::DropOldestMotion,
             pairing_pin: PairingPin::static_pin("0000"),
-            app_version: "9.1.0.0".to_owned(),
+            // The negative fourth component is how Moonlight recognizes Sunshine-compatible
+            // servers and enables the modern encrypted control/media negotiation.
+            app_version: "7.1.431.-1".to_owned(),
             video_stream: VideoStream::default(),
             encryption_mode: EncryptionMode::default(),
         }
