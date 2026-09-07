@@ -33,8 +33,8 @@ the NanoKVM PCIe after `dd` completes.
 3. Connect the NanoKVM USB device port to the target computer.
 4. Power the NanoKVM and wait for Debian to boot.
 
-The service creates one USB gadget containing keyboard, relative mouse,
-absolute pointer, touchscreen, and UAC2 audio capture functions.
+The service creates one USB gadget with separate keyboard, relative mouse, and
+absolute pointer interfaces, plus UAC2 audio capture.
 
 ## Set the initial password
 
@@ -91,7 +91,7 @@ The default image service expects:
 capture: /dev/video0, UYVY, 1920x1080 at 60 FPS
 encoder: /dev/video1, HEVC
 audio:   UAC2, 48 kHz stereo
-HID:     combined /dev/hidg0 gadget
+HID:     /dev/hidg0 keyboard, /dev/hidg1 relative mouse, /dev/hidg2 absolute pointer
 OLED:    /dev/dri/card0, mirrored horizontally
 ```
 

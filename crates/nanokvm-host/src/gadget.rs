@@ -13,7 +13,10 @@ use crate::audio::{
     USB_AUDIO_VOLUME_MIN_DB_256, USB_AUDIO_VOLUME_RES_DB_256,
 };
 use crate::cli::{Args, UsbAudioClass};
-use crate::hid_report::{HID_REPORT_LEN, report_descriptor};
+use crate::hid_report::{
+    ABSOLUTE_MOUSE_REPORT_LEN, KEYBOARD_REPORT_LEN, RELATIVE_MOUSE_REPORT_LEN,
+    absolute_mouse_report_descriptor, keyboard_report_descriptor, relative_mouse_report_descriptor,
+};
 use crate::msd::MassStorageController;
 
 #[derive(Debug, Clone)]
@@ -48,19 +51,35 @@ impl GadgetConfig {
 #[derive(Debug)]
 pub struct RegisteredGadget {
     _registration: RegGadget,
+    pub hid: HidDevicePaths,
     pub mass_storage: MassStorageController,
+}
+
+#[derive(Debug, Clone)]
+pub struct HidDevicePaths {
+    pub keyboard: PathBuf,
+    pub relative_mouse: PathBuf,
+    pub absolute_mouse: PathBuf,
 }
 
 pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegisteredGadget> {
     ensure_configfs()?;
     remove_existing_gadget(config)?;
 
-    let mut hid = Hid::builder();
-    hid.sub_class = 0;
-    hid.protocol = 0;
-    hid.report_len = HID_REPORT_LEN as u8;
-    hid.report_desc = report_descriptor();
-    let (hid, function) = hid.build();
+    // Match the proven NanoKVM layout: separate HID interfaces prevent PiKVM's
+    // absolute pointer from changing how the target sees Moonlight's mouse.
+    let (keyboard, keyboard_function) =
+        build_hid(1, KEYBOARD_REPORT_LEN, keyboard_report_descriptor());
+    let (relative_mouse, relative_mouse_function) = build_hid(
+        2,
+        RELATIVE_MOUSE_REPORT_LEN,
+        relative_mouse_report_descriptor(),
+    );
+    let (absolute_mouse, absolute_mouse_function) = build_hid(
+        2,
+        ABSOLUTE_MOUSE_REPORT_LEN,
+        absolute_mouse_report_descriptor(),
+    );
 
     let (audio_function, audio_class) = match config.audio_class {
         UsbAudioClass::Uac1 => (build_uac1(), "UAC1"),
@@ -73,7 +92,9 @@ pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegisteredGadget> {
     let (mass_storage, mass_storage_function) = Msd::builder().with_lun(lun).build();
 
     let mut usb_config = Config::new(format!("HID + {audio_class} + MSD"))
-        .with_function(function)
+        .with_function(keyboard_function)
+        .with_function(relative_mouse_function)
+        .with_function(absolute_mouse_function)
         .with_function(audio_function)
         .with_function(mass_storage_function);
     usb_config.max_power = 250;
@@ -93,12 +114,19 @@ pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegisteredGadget> {
         None => usb_gadget::default_udc()?,
     };
     let reg = gadget.bind(&udc)?;
+    let hid_paths = HidDevicePaths {
+        keyboard: keyboard.device_path()?,
+        relative_mouse: relative_mouse.device_path()?,
+        absolute_mouse: absolute_mouse.device_path()?,
+    };
     println!(
-        "registered {} on UDC {} at {} ({})",
+        "registered {} on UDC {} at {} (keyboard={}, relative_mouse={}, absolute_mouse={})",
         config.product,
         udc.name().to_string_lossy(),
         reg.path().display(),
-        hid.device_path()?.display()
+        hid_paths.keyboard.display(),
+        hid_paths.relative_mouse.display(),
+        hid_paths.absolute_mouse.display(),
     );
     println!(
         "{audio_class} host playback input: {} channels, {} Hz, {}-bit",
@@ -113,8 +141,18 @@ pub fn setup_usb_gadget(config: &GadgetConfig) -> io::Result<RegisteredGadget> {
     )?;
     Ok(RegisteredGadget {
         _registration: reg,
+        hid: hid_paths,
         mass_storage,
     })
+}
+
+fn build_hid(protocol: u8, report_len: usize, report_desc: Vec<u8>) -> (Hid, Handle) {
+    let mut hid = Hid::builder();
+    hid.sub_class = 0;
+    hid.protocol = protocol;
+    hid.report_len = report_len as u8;
+    hid.report_desc = report_desc;
+    hid.build()
 }
 
 fn find_function_path(gadget: &Path, driver: &str) -> io::Result<PathBuf> {

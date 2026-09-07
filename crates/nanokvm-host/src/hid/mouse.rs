@@ -7,49 +7,77 @@ use crate::hid_report::{
 
 impl UsbGadgetInputSink {
     pub(super) async fn write_mouse(&self, event: MouseEvent) -> std::io::Result<()> {
-        let Some(file) = &self.hid else {
-            println!("mouse event without HID path: {event:?}");
-            return Ok(());
-        };
-
-        if self.trace_pointer_input {
+        if self.trace() {
             println!("pointer input: {event:?}");
         }
         match event {
             MouseEvent::Relative { dx, dy } => {
-                let mut state = self.state.lock().await;
-                state.pointer_mode = PointerMode::Relative;
-                let report = encode_relative_mouse(&RelativeMouseReport {
-                    buttons: state.mouse_buttons,
-                    x: clamp_i8(dx),
-                    y: clamp_i8(dy),
-                    wheel: 0,
-                })?;
-                drop(state);
+                let Some(file) = self.relative_mouse() else {
+                    println!("relative mouse event without HID path: {event:?}");
+                    return Ok(());
+                };
+                let report;
+                let release = {
+                    let mut state = self.state.lock().await;
+                    let release = if state.pointer_mode == PointerMode::Absolute {
+                        let buttons = state.take_buttons(PointerMode::Absolute);
+                        if buttons != 0 {
+                            Some((
+                                self.endpoint(PointerMode::Absolute).cloned(),
+                                encode_absolute_pointer(&AbsolutePointerReport {
+                                    buttons: 0,
+                                    x: state.pointer_x,
+                                    y: state.pointer_y,
+                                    wheel: 0,
+                                })?
+                                .to_vec(),
+                            ))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    state.pointer_mode = PointerMode::Relative;
+                    report = encode_relative_mouse(&RelativeMouseReport {
+                        buttons: state.buttons(PointerMode::Relative),
+                        x: clamp_i8(dx),
+                        y: clamp_i8(dy),
+                        wheel: 0,
+                    })?;
+                    release
+                };
+                write_release(release).await?;
                 write_report(file, &report).await
             }
             MouseEvent::Button { pressed, button } => {
-                let mut state = self.state.lock().await;
+                let mode;
                 let mask = map_mouse_button(button);
-                if pressed {
-                    state.mouse_buttons |= mask;
-                } else {
-                    state.mouse_buttons &= !mask;
-                }
-                let report = match state.pointer_mode {
-                    PointerMode::Relative => encode_relative_mouse(&RelativeMouseReport {
-                        buttons: state.mouse_buttons,
-                        x: 0,
-                        y: 0,
-                        wheel: 0,
-                    })?,
-                    PointerMode::Absolute => encode_absolute_pointer(&AbsolutePointerReport {
-                        buttons: state.mouse_buttons,
-                        x: state.pointer_x,
-                        y: state.pointer_y,
-                    })?,
+                let report = {
+                    let mut state = self.state.lock().await;
+                    mode = state.pointer_mode;
+                    state.set_button(mode, mask, pressed);
+                    match mode {
+                        PointerMode::Relative => encode_relative_mouse(&RelativeMouseReport {
+                            buttons: state.buttons(PointerMode::Relative),
+                            x: 0,
+                            y: 0,
+                            wheel: 0,
+                        })?
+                        .to_vec(),
+                        PointerMode::Absolute => encode_absolute_pointer(&AbsolutePointerReport {
+                            buttons: state.buttons(PointerMode::Absolute),
+                            x: state.pointer_x,
+                            y: state.pointer_y,
+                            wheel: 0,
+                        })?
+                        .to_vec(),
+                    }
                 };
-                drop(state);
+                let Some(file) = self.endpoint(mode) else {
+                    println!("mouse button event without {mode:?} HID path: {event:?}");
+                    return Ok(());
+                };
                 write_report(file, &report).await
             }
             MouseEvent::Absolute {
@@ -58,28 +86,46 @@ impl UsbGadgetInputSink {
                 width,
                 height,
             } => {
-                let mut state = self.state.lock().await;
-                state.set_pointer_from_absolute(x, y, width, height);
-                state.pointer_mode = PointerMode::Absolute;
-                let report = encode_absolute_pointer(&AbsolutePointerReport {
-                    buttons: state.mouse_buttons,
-                    x: state.pointer_x,
-                    y: state.pointer_y,
-                })?;
-                drop(state);
+                let Some(file) = self.absolute_mouse() else {
+                    println!("absolute mouse event without HID path: {event:?}");
+                    return Ok(());
+                };
+                let report;
+                let release = {
+                    let mut state = self.state.lock().await;
+                    let release = if state.pointer_mode == PointerMode::Relative {
+                        let buttons = state.take_buttons(PointerMode::Relative);
+                        if buttons != 0 {
+                            Some((
+                                self.endpoint(PointerMode::Relative).cloned(),
+                                encode_relative_mouse(&RelativeMouseReport {
+                                    buttons: 0,
+                                    x: 0,
+                                    y: 0,
+                                    wheel: 0,
+                                })?
+                                .to_vec(),
+                            ))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    state.set_pointer_from_absolute(x, y, width, height);
+                    state.pointer_mode = PointerMode::Absolute;
+                    report = encode_absolute_pointer(&AbsolutePointerReport {
+                        buttons: state.buttons(PointerMode::Absolute),
+                        x: state.pointer_x,
+                        y: state.pointer_y,
+                        wheel: 0,
+                    })?;
+                    release
+                };
+                write_release(release).await?;
                 write_report(file, &report).await
             }
         }
-    }
-}
-
-fn map_mouse_button(button: u8) -> u8 {
-    match button {
-        1 => 0x01,
-        2 => 0x04,
-        3 => 0x02,
-        4..=8 => 1 << (button - 1),
-        _ => 0,
     }
 }
 
@@ -92,8 +138,8 @@ pub(super) async fn write_web_button(
         "left" => 1,
         "middle" => 2,
         "right" => 3,
-        "back" => 4,
-        "forward" => 5,
+        "back" | "up" => 4,
+        "forward" | "down" => 5,
         _ => return Ok(()),
     };
     sink.write_mouse(MouseEvent::Button { pressed, button })
@@ -105,26 +151,43 @@ pub(super) async fn write_web_absolute(
     x: i16,
     y: i16,
 ) -> std::io::Result<()> {
-    let Some(file) = &sink.hid else {
+    let Some(file) = sink.absolute_mouse() else {
         return Ok(());
     };
-    let mut state = sink.state.lock().await;
-    state.pointer_x = web_axis_to_hid(x);
-    state.pointer_y = web_axis_to_hid(y);
-    state.pointer_mode = PointerMode::Absolute;
-    let report = encode_absolute_pointer(&AbsolutePointerReport {
-        buttons: state.mouse_buttons,
-        x: state.pointer_x,
-        y: state.pointer_y,
-    })?;
-    drop(state);
+    let report;
+    let release = {
+        let mut state = sink.state.lock().await;
+        let release = if state.pointer_mode == PointerMode::Relative {
+            let buttons = state.take_buttons(PointerMode::Relative);
+            if buttons != 0 {
+                Some((
+                    sink.endpoint(PointerMode::Relative).cloned(),
+                    encode_relative_mouse(&RelativeMouseReport {
+                        buttons: 0,
+                        x: 0,
+                        y: 0,
+                        wheel: 0,
+                    })?
+                    .to_vec(),
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        state.set_pointer_from_web(x, y);
+        state.pointer_mode = PointerMode::Absolute;
+        report = encode_absolute_pointer(&AbsolutePointerReport {
+            buttons: state.buttons(PointerMode::Absolute),
+            x: state.pointer_x,
+            y: state.pointer_y,
+            wheel: 0,
+        })?;
+        release
+    };
+    write_release(release).await?;
     write_report(file, &report).await
-}
-
-fn web_axis_to_hid(value: i16) -> u16 {
-    let unsigned = i64::from(value) - i64::from(i16::MIN);
-    ((unsigned * i64::from(crate::hid_report::POINTER_AXIS_MAX) + i64::from(u16::MAX) / 2)
-        / i64::from(u16::MAX)) as u16
 }
 
 pub(super) async fn write_web_relative(
@@ -139,17 +202,21 @@ pub(super) async fn write_web_relative(
     .await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn maps_pikvm_signed_absolute_axis_to_hid_axis() {
-        assert_eq!(web_axis_to_hid(i16::MIN), 0);
-        assert_eq!(web_axis_to_hid(0), 16_384);
-        assert_eq!(
-            web_axis_to_hid(i16::MAX),
-            crate::hid_report::POINTER_AXIS_MAX
-        );
+fn map_mouse_button(button: u8) -> u8 {
+    match button {
+        1 => 0x01,
+        2 => 0x04,
+        3 => 0x02,
+        4..=8 => 1 << (button - 1),
+        _ => 0,
     }
+}
+
+async fn write_release(
+    release: Option<(Option<super::HidEndpoint>, Vec<u8>)>,
+) -> std::io::Result<()> {
+    let Some((Some(file), report)) = release else {
+        return Ok(());
+    };
+    write_report(&file, &report).await
 }

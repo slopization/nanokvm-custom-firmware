@@ -26,7 +26,7 @@ use moonlink_tokio::{FilePairingStore, ServerBuilder};
 
 use crate::cli::{Args, SourceKind};
 use crate::gadget::{GadgetConfig, setup_usb_gadget};
-use crate::hid::UsbGadgetInputSink;
+use crate::hid::{InputDevicePaths, UsbGadgetInputSink};
 use crate::media::HostMediaProvider;
 use crate::pairing_manager::PairingManager;
 use crate::session_arbiter::SessionArbiter;
@@ -53,7 +53,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let input_sink = UsbGadgetInputSink::open(args.hid_path(), args.trace_pointer_input).await?;
+    let input_paths = usb_gadget
+        .as_ref()
+        .map(|gadget| InputDevicePaths {
+            keyboard: Some(gadget.hid.keyboard.clone()),
+            relative_mouse: Some(gadget.hid.relative_mouse.clone()),
+            absolute_mouse: Some(gadget.hid.absolute_mouse.clone()),
+        })
+        .or_else(|| args.input_device_paths())
+        .unwrap_or_default();
+    let input_sink = UsbGadgetInputSink::open(input_paths, args.trace_pointer_input).await?;
     let atx = match atx::AtxController::open() {
         Ok(controller) => Some(controller),
         Err(error) => {

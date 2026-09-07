@@ -1,34 +1,12 @@
 use std::io;
 
-use hidreport::hid::{CollectionItem, ItemBuilder, ReportDescriptorBuilder};
-use hidreport::types::{
-    LogicalMaximum, LogicalMinimum, ReportCount, ReportId, ReportSize, UsageId, UsageMaximum,
-    UsageMinimum, UsagePage,
-};
 use serde::Serialize;
-use usbd_hid::descriptor::generator_prelude::*;
 
-pub const HID_REPORT_LEN: usize = 9;
+pub const KEYBOARD_REPORT_LEN: usize = 8;
+pub const RELATIVE_MOUSE_REPORT_LEN: usize = 4;
+pub const ABSOLUTE_MOUSE_REPORT_LEN: usize = 6;
 pub const POINTER_AXIS_MAX: u16 = 32_767;
 
-const KEYBOARD_REPORT_ID: u8 = 1;
-const RELATIVE_MOUSE_REPORT_ID: u8 = 2;
-const ABSOLUTE_POINTER_REPORT_ID: u8 = 3;
-const TOUCHSCREEN_REPORT_ID: u8 = 4;
-
-#[gen_hid_descriptor(
-    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = KEYBOARD) = {
-        (report_id = 1,) = {
-            (usage_page = KEYBOARD, usage_min = 0xE0, usage_max = 0xE7) = {
-                #[packed_bits = 8] #[item_settings(data,variable,absolute)] modifiers=input;
-            };
-            #[item_settings(constant,variable,absolute)] reserved=input;
-            (usage_page = KEYBOARD, usage_min = 0x00, usage_max = 0x65) = {
-                #[item_settings(data,array,absolute)] keys=input;
-            };
-        };
-    }
-)]
 #[derive(Serialize)]
 pub struct KeyboardReport {
     pub modifiers: u8,
@@ -36,22 +14,6 @@ pub struct KeyboardReport {
     pub keys: [u8; 6],
 }
 
-#[gen_hid_descriptor(
-    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = MOUSE) = {
-        (collection = PHYSICAL, usage = POINTER) = {
-            (report_id = 2,) = {
-                (usage_page = BUTTON, usage_min = BUTTON_1, usage_max = BUTTON_8) = {
-                    #[packed_bits = 8] #[item_settings(data,variable,absolute)] buttons=input;
-                };
-                (usage_page = GENERIC_DESKTOP,) = {
-                    (usage = X,) = { #[item_settings(data,variable,relative)] x=input; };
-                    (usage = Y,) = { #[item_settings(data,variable,relative)] y=input; };
-                    (usage = WHEEL,) = { #[item_settings(data,variable,relative)] wheel=input; };
-                };
-            };
-        };
-    }
-)]
 #[derive(Serialize)]
 pub struct RelativeMouseReport {
     pub buttons: u8,
@@ -60,121 +22,144 @@ pub struct RelativeMouseReport {
     pub wheel: i8,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Serialize)]
 pub struct AbsolutePointerReport {
     pub buttons: u8,
     pub x: u16,
     pub y: u16,
+    pub wheel: i8,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct TouchscreenReport {
-    pub flags: u8,
-    pub contact_id: u8,
-    pub x: u16,
-    pub y: u16,
-    pub contact_count: u8,
-}
-
-pub fn report_descriptor() -> Vec<u8> {
-    [
-        KeyboardReport::desc(),
-        RelativeMouseReport::desc(),
-        &absolute_pointer_descriptor(),
-        &touchscreen_descriptor(),
+pub fn keyboard_report_descriptor() -> Vec<u8> {
+    vec![
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x06, // Usage (Keyboard)
+        0xa1, 0x01, // Collection (Application)
+        0x05, 0x07, // Usage Page (Keyboard/Keypad)
+        0x19, 0xe0, // Usage Minimum (Left Control)
+        0x29, 0xe7, // Usage Maximum (Right GUI)
+        0x15, 0x00, // Logical Minimum (0)
+        0x25, 0x01, // Logical Maximum (1)
+        0x75, 0x01, // Report Size (1)
+        0x95, 0x08, // Report Count (8)
+        0x81, 0x02, // Input (Data, Variable, Absolute)
+        0x95, 0x01, // Report Count (1)
+        0x75, 0x08, // Report Size (8)
+        0x81, 0x03, // Input (Constant, Variable, Absolute)
+        0x95, 0x05, // Report Count (5)
+        0x75, 0x01, // Report Size (1)
+        0x05, 0x08, // Usage Page (LEDs)
+        0x19, 0x01, // Usage Minimum (Num Lock)
+        0x29, 0x05, // Usage Maximum (Kana)
+        0x91, 0x02, // Output (Data, Variable, Absolute)
+        0x95, 0x01, // Report Count (1)
+        0x75, 0x03, // Report Size (3)
+        0x91, 0x03, // Output (Constant, Variable, Absolute)
+        0x95, 0x06, // Report Count (6)
+        0x75, 0x08, // Report Size (8)
+        0x15, 0x00, // Logical Minimum (0)
+        0x25, 0x65, // Logical Maximum (101)
+        0x05, 0x07, // Usage Page (Keyboard/Keypad)
+        0x19, 0x00, // Usage Minimum (0)
+        0x29, 0x65, // Usage Maximum (101)
+        0x81, 0x00, // Input (Data, Array, Absolute)
+        0xc0, // End Collection
     ]
-    .concat()
 }
 
-fn touchscreen_descriptor() -> Vec<u8> {
-    ReportDescriptorBuilder::new()
-        .append(UsagePage::from(0x0d).into())
-        .append(UsageId::from(0x04).into())
-        .open_collection(CollectionItem::Application)
-        .append(ReportId::from(TOUCHSCREEN_REPORT_ID).into())
-        .append(UsageId::from(0x22).into())
-        .open_collection(CollectionItem::Logical)
-        .append(UsageId::from(0x42).into())
-        .append(UsageId::from(0x32).into())
-        .append(LogicalMinimum::from(0).into())
-        .append(LogicalMaximum::from(1).into())
-        .append(ReportSize::from(1).into())
-        .append(ReportCount::from(2).into())
-        .input(ItemBuilder::new().variable().absolute().input())
-        .append(ReportCount::from(6).into())
-        .input(ItemBuilder::new().constant().input())
-        .append(UsageId::from(0x51).into())
-        .append(LogicalMaximum::from(255).into())
-        .append(ReportSize::from(8).into())
-        .append(ReportCount::from(1).into())
-        .input(ItemBuilder::new().variable().absolute().input())
-        .append(UsagePage::from(0x01).into())
-        .append(UsageId::from(0x30).into())
-        .append(UsageId::from(0x31).into())
-        .append(LogicalMaximum::from(i32::from(POINTER_AXIS_MAX)).into())
-        .append(ReportSize::from(16).into())
-        .append(ReportCount::from(2).into())
-        .input(ItemBuilder::new().variable().absolute().input())
-        .close_collection()
-        .append(UsagePage::from(0x0d).into())
-        .append(UsageId::from(0x54).into())
-        .append(LogicalMaximum::from(1).into())
-        .append(ReportSize::from(8).into())
-        .append(ReportCount::from(1).into())
-        .input(ItemBuilder::new().variable().absolute().input())
-        .close_collection()
-        .build()
+pub fn relative_mouse_report_descriptor() -> Vec<u8> {
+    vec![
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x02, // Usage (Mouse)
+        0xa1, 0x01, // Collection (Application)
+        0x09, 0x01, // Usage (Pointer)
+        0xa1, 0x00, // Collection (Physical)
+        0x05, 0x09, // Usage Page (Button)
+        0x19, 0x01, // Usage Minimum (Button 1)
+        0x29, 0x05, // Usage Maximum (Button 5)
+        0x15, 0x00, // Logical Minimum (0)
+        0x25, 0x01, // Logical Maximum (1)
+        0x95, 0x05, // Report Count (5)
+        0x75, 0x01, // Report Size (1)
+        0x81, 0x02, // Input (Data, Variable, Absolute)
+        0x95, 0x01, // Report Count (1)
+        0x75, 0x03, // Report Size (3)
+        0x81, 0x03, // Input (Constant, Variable, Absolute)
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x30, // Usage (X)
+        0x09, 0x31, // Usage (Y)
+        0x09, 0x38, // Usage (Wheel)
+        0x15, 0x81, // Logical Minimum (-127)
+        0x25, 0x7f, // Logical Maximum (127)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x03, // Report Count (3)
+        0x81, 0x06, // Input (Data, Variable, Relative)
+        0xc0, // End Collection
+        0xc0, // End Collection
+    ]
 }
 
-fn absolute_pointer_descriptor() -> Vec<u8> {
-    ReportDescriptorBuilder::new()
-        .append(UsagePage::from(0x01).into())
-        .append(UsageId::from(0x02).into())
-        .open_collection(CollectionItem::Application)
-        .append(UsageId::from(0x01).into())
-        .open_collection(CollectionItem::Physical)
-        .append(ReportId::from(ABSOLUTE_POINTER_REPORT_ID).into())
-        .append(UsagePage::from(0x09).into())
-        .append(UsageMinimum::from(1).into())
-        .append(UsageMaximum::from(8).into())
-        .append(LogicalMinimum::from(0).into())
-        .append(LogicalMaximum::from(1).into())
-        .append(ReportSize::from(1).into())
-        .append(ReportCount::from(8).into())
-        .input(ItemBuilder::new().variable().absolute().input())
-        .append(UsagePage::from(0x01).into())
-        .append(UsageId::from(0x30).into())
-        .append(UsageId::from(0x31).into())
-        .append(LogicalMinimum::from(0).into())
-        .append(LogicalMaximum::from(i32::from(POINTER_AXIS_MAX)).into())
-        .append(ReportSize::from(16).into())
-        .append(ReportCount::from(2).into())
-        .input(ItemBuilder::new().variable().absolute().input())
-        .close_collection()
-        .close_collection()
-        .build()
+pub fn absolute_mouse_report_descriptor() -> Vec<u8> {
+    vec![
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x02, // Usage (Mouse)
+        0xa1, 0x01, // Collection (Application)
+        0x09, 0x01, // Usage (Pointer)
+        0xa1, 0x00, // Collection (Physical)
+        0x05, 0x09, // Usage Page (Button)
+        0x19, 0x01, // Usage Minimum (Button 1)
+        0x29, 0x05, // Usage Maximum (Button 5)
+        0x15, 0x00, // Logical Minimum (0)
+        0x25, 0x01, // Logical Maximum (1)
+        0x95, 0x05, // Report Count (5)
+        0x75, 0x01, // Report Size (1)
+        0x81, 0x02, // Input (Data, Variable, Absolute)
+        0x95, 0x01, // Report Count (1)
+        0x75, 0x03, // Report Size (3)
+        0x81, 0x01, // Input (Constant, Variable, Absolute)
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x30, // Usage (X)
+        0x09, 0x31, // Usage (Y)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x7f, // Logical Maximum (32767)
+        0x35, 0x00, // Physical Minimum (0)
+        0x46, 0xff, 0x7f, // Physical Maximum (32767)
+        0x75, 0x10, // Report Size (16)
+        0x95, 0x02, // Report Count (2)
+        0x81, 0x02, // Input (Data, Variable, Absolute)
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x38, // Usage (Wheel)
+        0x15, 0x81, // Logical Minimum (-127)
+        0x25, 0x7f, // Logical Maximum (127)
+        0x35, 0x00, // Physical Minimum (0)
+        0x45, 0x00, // Physical Maximum (0)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x01, // Report Count (1)
+        0x81, 0x06, // Input (Data, Variable, Relative)
+        0xc0, // End Collection
+        0xc0, // End Collection
+    ]
 }
 
-pub fn encode_keyboard(report: &KeyboardReport) -> io::Result<[u8; HID_REPORT_LEN]> {
-    encode(KEYBOARD_REPORT_ID, report)
+pub fn encode_keyboard(report: &KeyboardReport) -> io::Result<[u8; KEYBOARD_REPORT_LEN]> {
+    encode_report(report)
 }
 
-pub fn encode_relative_mouse(report: &RelativeMouseReport) -> io::Result<[u8; HID_REPORT_LEN]> {
-    encode(RELATIVE_MOUSE_REPORT_ID, report)
+pub fn encode_relative_mouse(
+    report: &RelativeMouseReport,
+) -> io::Result<[u8; RELATIVE_MOUSE_REPORT_LEN]> {
+    encode_report(report)
 }
 
-pub fn encode_absolute_pointer(report: &AbsolutePointerReport) -> io::Result<[u8; HID_REPORT_LEN]> {
-    encode(ABSOLUTE_POINTER_REPORT_ID, report)
+pub fn encode_absolute_pointer(
+    report: &AbsolutePointerReport,
+) -> io::Result<[u8; ABSOLUTE_MOUSE_REPORT_LEN]> {
+    encode_report(report)
 }
 
-pub fn encode_touchscreen(report: &TouchscreenReport) -> io::Result<[u8; HID_REPORT_LEN]> {
-    encode(TOUCHSCREEN_REPORT_ID, report)
-}
-
-fn encode<T: Serialize>(report_id: u8, report: &T) -> io::Result<[u8; HID_REPORT_LEN]> {
-    let mut bytes = [0; HID_REPORT_LEN];
-    bytes[0] = report_id;
-    ssmarshal::serialize(&mut bytes[1..], report)
+fn encode_report<T: Serialize, const N: usize>(report: &T) -> io::Result<[u8; N]> {
+    let mut bytes = [0; N];
+    ssmarshal::serialize(&mut bytes, report)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     Ok(bytes)
 }
@@ -184,7 +169,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn serializes_all_reports_with_their_ids() {
+    fn serializes_standard_hid_reports_without_report_ids() {
         assert_eq!(
             encode_keyboard(&KeyboardReport {
                 modifiers: 2,
@@ -192,7 +177,7 @@ mod tests {
                 keys: [4, 0, 0, 0, 0, 0],
             })
             .unwrap(),
-            [1, 2, 0, 4, 0, 0, 0, 0, 0]
+            [2, 0, 4, 0, 0, 0, 0, 0]
         );
         assert_eq!(
             encode_relative_mouse(&RelativeMouseReport {
@@ -202,27 +187,33 @@ mod tests {
                 wheel: -1,
             })
             .unwrap(),
-            [2, 1, 0xfe, 3, 0xff, 0, 0, 0, 0]
+            [1, 0xfe, 3, 0xff]
         );
         assert_eq!(
             encode_absolute_pointer(&AbsolutePointerReport {
                 buttons: 1,
                 x: 0x1234,
                 y: 0x5678,
+                wheel: -1,
             })
             .unwrap(),
-            [3, 1, 0x34, 0x12, 0x78, 0x56, 0, 0, 0]
+            [1, 0x34, 0x12, 0x78, 0x56, 0xff]
+        );
+    }
+
+    #[test]
+    fn descriptors_start_with_expected_usages() {
+        assert_eq!(
+            &keyboard_report_descriptor()[..4],
+            &[0x05, 0x01, 0x09, 0x06]
         );
         assert_eq!(
-            encode_touchscreen(&TouchscreenReport {
-                flags: 3,
-                contact_id: 7,
-                x: 0x1234,
-                y: 0x5678,
-                contact_count: 1,
-            })
-            .unwrap(),
-            [4, 3, 7, 0x34, 0x12, 0x78, 0x56, 1, 0]
+            &relative_mouse_report_descriptor()[..6],
+            &[0x05, 0x01, 0x09, 0x02, 0xa1, 0x01]
+        );
+        assert_eq!(
+            &absolute_mouse_report_descriptor()[..6],
+            &[0x05, 0x01, 0x09, 0x02, 0xa1, 0x01]
         );
     }
 }

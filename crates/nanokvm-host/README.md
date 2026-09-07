@@ -18,8 +18,7 @@ sudo ./target/release/nanokvm-host \
   --capture-device /dev/video0 \
   --encoder-device /dev/video1 \
   --raw-fourcc UYVY \
-  --codec hevc \
-  --hid /dev/hidg0
+  --codec hevc
 ```
 
 Pairing is interactive. Start pairing in Moonlight, then enter the displayed
@@ -54,14 +53,17 @@ enables `V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE` and writes
 `V4L2_CID_MPEG_VIDEO_BITRATE`. Clearing the bitrate in the management UI leaves
 both controls at the encoder driver's default.
 
-`--setup-usb-gadget` creates one configfs USB gadget with a combined HID
-endpoint on `/dev/hidg0`, selectable UAC1 or UAC2 audio, and removable mass
-storage. Its HID reports include keyboard, relative mouse, absolute mouse, and
-touchscreen input. UAC1 is the default for PlayStation compatibility; select
-UAC2 in the management UI or use `--usb-audio-class uac2`. Changing the class
-disconnects and re-enumerates the USB gadget, restarts the service, and requires
-signing in to the management UI again. If the gadget is already managed
-elsewhere, omit that option and pass `--hid` explicitly.
+`--setup-usb-gadget` creates a configfs USB gadget with separate standard HID
+interfaces for keyboard, relative mouse, and absolute mouse on `/dev/hidg0`,
+`/dev/hidg1`, and `/dev/hidg2`, plus selectable UAC1 or UAC2 audio and removable
+mass storage. Keeping relative and absolute mouse endpoints separate prevents
+PiKVM absolute-pointer reports from changing how the target interprets
+Moonlight relative-mouse reports. UAC1 is the default for PlayStation
+compatibility; select UAC2 in the management UI or use `--usb-audio-class
+uac2`. Changing the class disconnects and re-enumerates the USB gadget, restarts
+the service, and requires signing in to the management UI again. If the gadget
+is already managed elsewhere, omit that option and pass `--keyboard-hid`,
+`--mouse-hid`, and `--absolute-mouse-hid` explicitly.
 
 The PiKVM virtual-media UI stores images under `--msd-dir` (default
 `/var/lib/moonlink/msd`) and leaves the LUN disconnected at startup. Reliable
@@ -119,7 +121,9 @@ For the already-tested external stream path:
 ```sh
 sudo ./target/release/nanokvm-host \
   --video-command 'your-capture-encoder --hevc --annex-b --aud --stdout' \
-  --hid /dev/hidg0
+  --keyboard-hid /dev/hidg0 \
+  --mouse-hid /dev/hidg1 \
+  --absolute-mouse-hid /dev/hidg2
 ```
 
 Useful arguments include `--name`, `--pin`, `--bind-http`, `--bind-https`,
@@ -127,7 +131,8 @@ Useful arguments include `--name`, `--pin`, `--bind-http`, `--bind-https`,
 `--buffer-count`, `--max-width`, `--max-height`, `--max-fps`,
 `--bitrate-kbps`, `--gop`, `--audio`, `--usb-audio-class`, `--encryption-mode`,
 `--no-repeat-headers`, `--no-aud`,
-`--hid`, `--setup-usb-gadget`, `--msd-dir`, `--udc`, and
+`--keyboard-hid`, `--mouse-hid`, `--absolute-mouse-hid`, `--setup-usb-gadget`,
+`--msd-dir`, `--udc`, and
 `--display-transform`.
 
 For Linux V4L2 smoke testing with fake devices:

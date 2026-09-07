@@ -29,7 +29,7 @@ captures target audio through UAC2.
 - `moonlink-v4l2`: asynchronous V4L2 queue and DMABUF support.
 - `basic-server`: synthetic external-stream example.
 - `nanokvm-host`: production NanoKVM PCIe daemon with V4L2, Wave420L,
-  USB audio, combined HID, OLED, and management UI integration.
+  USB audio, separate keyboard/relative/absolute HID, OLED, and management UI integration.
 
 ## Development
 

@@ -7,6 +7,7 @@ use moonlink_v4l2::FourCc;
 use serde::{Deserialize, Serialize};
 
 use crate::display::DisplayTransform;
+use crate::hid::InputDevicePaths;
 use crate::v4l2_provider::V4l2Settings;
 
 #[derive(Debug, Clone, Parser)]
@@ -90,11 +91,11 @@ pub struct Args {
     #[arg(long)]
     pub no_aud: bool,
     #[arg(long)]
-    pub hid: Option<PathBuf>,
-    #[arg(long)]
     pub keyboard_hid: Option<PathBuf>,
     #[arg(long)]
     pub mouse_hid: Option<PathBuf>,
+    #[arg(long)]
+    pub absolute_mouse_hid: Option<PathBuf>,
     #[arg(long)]
     pub trace_pointer_input: bool,
     #[arg(long)]
@@ -118,12 +119,30 @@ pub struct Args {
 }
 
 impl Args {
-    pub fn hid_path(&self) -> Option<PathBuf> {
-        self.hid
+    pub fn input_device_paths(&self) -> Option<InputDevicePaths> {
+        if self.keyboard_hid.is_none()
+            && self.mouse_hid.is_none()
+            && self.absolute_mouse_hid.is_none()
+        {
+            return None;
+        }
+        let keyboard = self
+            .keyboard_hid
             .clone()
-            .or_else(|| self.keyboard_hid.clone())
-            .or_else(|| self.mouse_hid.clone())
-            .or_else(|| self.setup_usb_gadget.then(|| PathBuf::from("/dev/hidg0")))
+            .unwrap_or_else(|| PathBuf::from("/dev/hidg0"));
+        let relative_mouse = self
+            .mouse_hid
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/dev/hidg1"));
+        let absolute_mouse = self
+            .absolute_mouse_hid
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/dev/hidg2"));
+        Some(InputDevicePaths {
+            keyboard: Some(keyboard),
+            relative_mouse: Some(relative_mouse),
+            absolute_mouse: Some(absolute_mouse),
+        })
     }
 
     pub fn source_kind(&self) -> Result<SourceKind, String> {

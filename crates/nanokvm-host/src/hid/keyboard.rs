@@ -24,7 +24,7 @@ impl UsbGadgetInputSink {
         usage: Option<KeyboardUsage>,
         pressed: bool,
     ) -> std::io::Result<()> {
-        let Some(file) = &self.hid else {
+        let Some(file) = self.keyboard() else {
             return Ok(());
         };
         let Some(usage) = usage else {

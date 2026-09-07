@@ -31,7 +31,6 @@ clap = { version = "4", features = ["derive"] }
 drm = "0.14"
 gpiocdev = "0.8"
 hex = "0.4"
-hidreport = "0.6.0"
 libc = "0.2"
 mime_guess = "2.0"
 moonlink-core = { version = "0.1.0", path = "crates/moonlink-core" }
@@ -51,7 +50,6 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-enet = "0.1.1"
 usb-gadget = "1.2.0"
-usbd-hid = "0.10.0"
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio-rustls = "0.26"
 rustls-pemfile = "2"
