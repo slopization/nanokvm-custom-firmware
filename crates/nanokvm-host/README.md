@@ -76,6 +76,68 @@ PIO-mode transfers can starve the single CPU and cause USB re-enumeration.
 Audio defaults to USB capture and is encoded as the packet duration requested
 by Moonlight. Use `--audio none` to advertise video only.
 
+## Settings layout
+
+Persistent settings are split into two independent stream blocks:
+
+```json
+{
+  "usb_audio_class": "uac1",
+  "web": {
+    "codec": "hevc",
+    "audio": "usb",
+    "capture_width": 1920,
+    "capture_height": 1080,
+    "advertised_fps": 60,
+    "frame_divider": 1,
+    "bitrate_kbps": 1000,
+    "gop": 30,
+    "seek": true,
+    "wavefront": false
+  },
+  "moonlight": {
+    "name": "nanokvm-moonlink",
+    "codec": "hevc",
+    "audio": "usb",
+    "capture_width": 1920,
+    "capture_height": 1080,
+    "advertised_fps": 60,
+    "frame_divider": 1,
+    "bitrate_kbps": 1000,
+    "gop": 30,
+    "wavefront": false,
+    "video_fec_percentage": 0,
+    "video_min_parity_shards": 2,
+    "encryption_mode": "opportunistic"
+  }
+}
+```
+
+There is no shared stream configuration: changing the web bitrate does not
+affect Moonlight, and vice versa. `usb_audio_class` stays device-wide because
+the USB gadget is rebuilt as one unit. The two blocks also carry their own
+audio source, Opus settings, capture mode, GOP, and loop-filter options.
+
+`web.seek` enables the MSE live-edge catch-up seek. `web.wavefront` enables
+HEVC WPP for better parallel software decoding.
+
+`web.gop` may be `0`, which disables periodic keyframes. The web player then
+uses the libde265/WASM software decoder: MSE requires a random access point to
+evict buffered data, so the no-GOP stream cannot use the native MSE path. The
+no-GOP path relies on forward-only playback, a forced keyframe at session
+start, and backpressure to the V4L2 capture queue. With `web.gop >= 1`, the
+player uses MSE and evicts only up to the latest buffered keyframe.
+Moonlight requires `moonlight.gop >= 1` and uses its own on-demand IDR policy.
+
+The NanoKVM settings window and the PiKVM **Streamer** menu both read
+`GET/PUT /api/settings/sections`; the window has separate **Web KVM** and
+**Moonlight** sections with independent save buttons. The legacy flat
+`GET/PUT /api/settings` endpoint remains for compatibility and maps to the
+`moonlight` block and the device-wide USB class. Changes to a section only
+disconnect the stream it belongs to; a USB audio class change still restarts
+the service. Older flat `settings.json` files are migrated automatically into
+both stream blocks.
+
 ## Management UI
 
 The PiKVM UI listens on `http://<device-ip>:8080` by default. Open **System**

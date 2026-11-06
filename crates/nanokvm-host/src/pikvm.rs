@@ -26,7 +26,6 @@ use crate::auth::AuthState;
 use crate::hid::UsbGadgetInputSink;
 use crate::msd::MassStorageController;
 use crate::settings::SettingsStore;
-use moonlink_tokio::ServerController;
 
 const SESSION_COOKIE: &str = "moonlink_session";
 
@@ -42,7 +41,6 @@ struct PikvmState {
     mass_storage: Option<MassStorageController>,
     jiggler: Jiggler,
     settings: SettingsStore,
-    server: ServerController,
 }
 
 #[derive(Clone, Default)]
@@ -125,7 +123,6 @@ pub fn routes(
     atx: Option<AtxController>,
     mass_storage: Option<MassStorageController>,
     settings: SettingsStore,
-    server: ServerController,
 ) -> Router {
     let state = PikvmState {
         auth,
@@ -134,7 +131,6 @@ pub fn routes(
         mass_storage,
         jiggler: Jiggler::default(),
         settings,
-        server,
     };
     Router::new()
         .route("/kvm", get(redirect_kvm))
@@ -383,22 +379,23 @@ fn hid_state(state: &PikvmState) -> Value {
 
 async fn streamer_state(state: &PikvmState) -> Value {
     let settings = state.settings.get().await;
-    let output_fps = settings.advertised_fps / settings.frame_divider.max(1);
-    let resolution = format!("{}x{}", settings.capture_width, settings.capture_height);
+    let web = &settings.web;
+    let output_fps = web.output_fps();
+    let resolution = format!("{}x{}", web.capture_width, web.capture_height);
     json!({"event_type":"streamer","event":{
         "features":{"hevc":true,"h264":false,"quality":false,"resolution":false},
         "limits":{
-            "desired_fps":{"min":1,"max":settings.advertised_fps},
+            "desired_fps":{"min":1,"max":web.advertised_fps},
             "available_resolutions":[resolution],
         },
         "applied":{
             "desired_fps":output_fps,
             "resolution":resolution,
-            "h264_bitrate":settings.bitrate_kbps,
-            "h264_gop":settings.gop,
+            "h264_bitrate":web.bitrate_kbps,
+            "h264_gop":web.gop,
         },
         "streamer":{"source":{"online":true,"resolution":{
-            "width":settings.capture_width,"height":settings.capture_height
+            "width":web.capture_width,"height":web.capture_height
         }}}
     }})
 }
@@ -891,22 +888,19 @@ async fn streamer_set_params(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let mut settings = state.settings.get().await;
+    let web = &mut settings.web;
     if let Some(fps) = params.desired_fps {
-        let fps = if fps == 0 {
-            settings.advertised_fps
-        } else {
-            fps
-        };
-        if fps > settings.advertised_fps || settings.advertised_fps % fps != 0 {
+        let fps = if fps == 0 { web.advertised_fps } else { fps };
+        if fps > web.advertised_fps || web.advertised_fps % fps != 0 {
             return (
                 StatusCode::BAD_REQUEST,
                 "FPS must be a non-zero divisor of the HDMI capture rate",
             )
                 .into_response();
         }
-        settings.frame_divider = settings.advertised_fps / fps;
+        web.frame_divider = web.advertised_fps / fps;
     } else if let Some(resolution) = params.resolution {
-        let current = format!("{}x{}", settings.capture_width, settings.capture_height);
+        let current = format!("{}x{}", web.capture_width, web.capture_height);
         if resolution != current {
             return (
                 StatusCode::NOT_IMPLEMENTED,
@@ -924,12 +918,9 @@ async fn streamer_set_params(
         if bitrate == 0 {
             return (StatusCode::BAD_REQUEST, "bitrate must be non-zero").into_response();
         }
-        settings.bitrate_kbps = Some(bitrate);
+        web.bitrate_kbps = Some(bitrate);
     } else if let Some(gop) = params.h264_gop {
-        if gop == 0 {
-            return (StatusCode::BAD_REQUEST, "GOP must be non-zero").into_response();
-        }
-        settings.gop = gop;
+        web.gop = gop;
     } else {
         return (
             StatusCode::BAD_REQUEST,
@@ -938,16 +929,8 @@ async fn streamer_set_params(
             .into_response();
     }
 
-    let runtime = match settings.runtime_config() {
-        Ok(runtime) => runtime,
-        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
-    };
     match state.settings.save(settings).await {
-        Ok(()) => {
-            state.server.apply_runtime_config(runtime);
-            state.server.disconnect_clients().await;
-            StatusCode::OK.into_response()
-        }
+        Ok(()) => StatusCode::OK.into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }

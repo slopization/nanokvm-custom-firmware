@@ -1,0 +1,32 @@
+Threaded libde265 WebAssembly build
+===================================
+
+Source: https://github.com/yume-chan/libde265
+Commit: b5eb3b64f00aa1b0134645cc78703b8e773633d5
+License: LGPL-3.0-only (see COPYING)
+
+This build uses the same upstream source as the unmodified
+libde265.mjs/libde265.wasm in ../libde265, with the following build changes:
+
+- Emscripten pthreads (-pthread -sPTHREAD_POOL_SIZE=4)
+- SIMD (-msimd128)
+- shared WebAssembly memory (required for pthreads)
+- EVAL_CTORS disabled
+
+The browser exposes this build only when the page is cross-origin isolated
+(COOP/COEP) and SharedArrayBuffer is available. Otherwise the single-threaded
+build in ../libde265 is used.
+
+Build commands (Emscripten 6.0.13):
+
+  emcmake cmake . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+    -DENABLE_SDL=OFF -DENABLE_DECODER=OFF -DCMAKE_REQUIRED_DEFINITIONS=-D__x86_64 \
+    -DCMAKE_REQUIRED_FLAGS='-msimd128 -pthread' \
+    -DCMAKE_CXX_FLAGS='-msimd128 -flto -pthread' \
+    -DCMAKE_C_FLAGS='-msimd128 -flto -pthread'
+  emmake make -j"$(( $(nproc) - 1 ))"
+  em++ -o wasm/libde265.mjs -flto -O3 -sSTACK_SIZE=128000 \
+    -sALLOW_MEMORY_GROWTH -sENVIRONMENT=worker -sMODULARIZE \
+    -sNO_DYNAMIC_EXECUTION -sWASM_BIGINT -sEVAL_CTORS=0 -lembind \
+    -sEMBIND_AOT -I.. -I. ../embind.cpp libde265/libde265.a \
+    -pthread -sPTHREAD_POOL_SIZE=4

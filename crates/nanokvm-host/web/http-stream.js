@@ -106,6 +106,13 @@ export async function openHevcStream(abortSignal, retries = 0) {
             throw new Error("invalid video stream preamble");
         }
         const view = new DataView(preamble.buffer, preamble.byteOffset, preamble.byteLength);
+        const gopHeader = response.headers.get("x-nanokvm-gop");
+        const gop = gopHeader === null ? null : Number(gopHeader);
+        const seekHeader = response.headers.get("x-nanokvm-seek");
+        const seek = seekHeader === null ? true : seekHeader === "1";
+        if (gop !== null && (!Number.isInteger(gop) || gop < 0)) {
+            throw new Error("invalid video stream GOP header");
+        }
         const stream = {
             reader,
             input,
@@ -113,6 +120,8 @@ export async function openHevcStream(abortSignal, retries = 0) {
             height: view.getUint32(12),
             fps: view.getUint32(16),
             timescale: view.getUint32(20),
+            gop,
+            seek,
         };
         validateMetadata(stream.width, stream.height, stream.fps, stream.timescale);
         return stream;

@@ -134,6 +134,7 @@ class SoftwareDecoder {
         this.worker = new Worker("/libde265-worker.js", { type: "module" });
         this.ready = deferred();
         this.failure = null;
+        this.threads = 0;
         this.worker.onmessage = event => this.handle(event.data);
         this.worker.onerror = event => this.fail(new Error(event.message || "HEVC decoder worker failed"));
     }
@@ -146,7 +147,10 @@ class SoftwareDecoder {
                 this.fail(error);
             }
         } else if (message.type === "ready") {
+            this.threads = message.threads || 0;
             this.ready.resolve();
+        } else if (message.type === "threads_error") {
+            console.warn("HEVC decoder threads unavailable:", message.message);
         } else if (message.type === "error") {
             this.fail(new Error(message.message));
         }
@@ -188,7 +192,8 @@ export async function runSoftwareHevc(video, canvas, status, abortSignal) {
         reader = stream.reader;
         video.classList.add("hidden");
         canvas.classList.remove("hidden");
-        status.textContent = `Software HEVC ${stream.width}x${stream.height} ${stream.fps} fps`;
+        const threads = decoder.threads > 1 ? `${decoder.threads} threads` : "1 thread";
+        status.textContent = `Software HEVC ${stream.width}x${stream.height} ${stream.fps} fps, ${threads}`;
         let started = false;
         while (!abortSignal.aborted) {
             const frame = await readAccessUnit(stream.input);

@@ -1,14 +1,27 @@
-import initialize from "/vendor/libde265/libde265.mjs";
-
 let module;
 let decoder;
 
 async function initializeDecoder() {
+    const threaded = self.crossOriginIsolated && typeof SharedArrayBuffer !== "undefined";
+    const base = threaded ? "/vendor/libde265-threaded" : "/vendor/libde265";
+    const { default: initialize } = await import(`${base}/libde265.mjs`);
     module = await initialize({
-        locateFile: name => `/vendor/libde265/${name}`,
+        locateFile: name => `${base}/${name}`,
     });
     decoder = new module.Decoder();
-    postMessage({ type: "ready" });
+
+    let threads = 0;
+    if (threaded) {
+        threads = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4));
+        try {
+            const error = decoder.startWorkerThreads(threads);
+            if (!module.isOk(error)) threads = 0;
+        } catch (error) {
+            threads = 0;
+            postMessage({ type: "threads_error", message: error.message || String(error) });
+        }
+    }
+    postMessage({ type: "ready", threads, isolated: self.crossOriginIsolated });
 }
 
 function copyPlane(image, channel) {

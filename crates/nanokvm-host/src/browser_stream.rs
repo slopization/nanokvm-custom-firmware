@@ -15,7 +15,7 @@ use crate::cli::{AudioSettings, AudioSource, StreamCodec};
 use crate::session_arbiter::{SessionArbiter, SessionOwner};
 use crate::settings::SettingsStore;
 use crate::v4l2_provider::{V4l2Session, V4l2Settings, output_fps};
-use moonlink_core::{AudioSession, MediaSession, MediaSessionConfig, VideoControlMessage};
+use moonlink_core::{AudioSession, MediaSession, MediaSessionConfig};
 use moonlink_protocol::VideoCodec;
 
 const STREAM_MAGIC: &[u8; 8] = b"NKHEVC01";
@@ -69,7 +69,11 @@ impl BrowserCapture {
                 .into_response();
         }
         let mut audio_settings = self.audio.clone();
-        self.settings.get().await.apply_audio(&mut audio_settings);
+        self.settings
+            .get()
+            .await
+            .web
+            .apply_audio(&mut audio_settings);
         if audio_settings.source == AudioSource::None {
             return (StatusCode::NOT_IMPLEMENTED, "browser audio is disabled").into_response();
         }
@@ -151,6 +155,12 @@ impl BrowserCapture {
         response
     }
 
+    pub async fn stop_active(&self) {
+        if let Some(active) = self.active_video.lock().await.take() {
+            active.cancel_and_wait().await;
+        }
+    }
+
     async fn start(&self) -> Result<Response, (StatusCode, String)> {
         let Some(mut settings) = self.v4l2.clone() else {
             return Err((
@@ -174,7 +184,10 @@ impl BrowserCapture {
                 format!("capture is owned by {owner:?}"),
             )
         })?;
-        self.settings.get().await.apply_v4l2(&mut settings);
+        let current = self.settings.get().await;
+        current.web.apply_v4l2(&mut settings);
+        let web_gop = current.web.gop;
+        let web_seek = current.web.seek;
         settings.codec = StreamCodec::Hevc;
         let fps =
             output_fps(&settings).map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -208,7 +221,6 @@ impl BrowserCapture {
         let (active, mut cancellation, completion) = ActiveVideoStream::new();
         *active_video = Some(active);
         tokio::spawn(async move {
-            let mut waiting_for_keyframe = false;
             let mut stream_timestamp = 0_u32;
             let timestamp_step = STREAM_TIMESCALE / fps.max(1);
             loop {
@@ -224,39 +236,35 @@ impl BrowserCapture {
                         break;
                     }
                 };
-                if waiting_for_keyframe && !frame.keyframe {
-                    tokio::task::yield_now().await;
-                    continue;
-                }
-                match sender.try_reserve_many(2) {
-                    Ok(mut permits) => {
-                        let (header, payload) =
-                            match stream_frame(frame.bytes, stream_timestamp, frame.keyframe) {
-                                Ok(chunks) => chunks,
-                                Err(err) => {
-                                    eprintln!("browser frame dropped: {err}");
-                                    continue;
-                                }
-                            };
-                        permits.next().expect("two reserved slots").send(Ok(header));
-                        permits
-                            .next()
-                            .expect("two reserved slots")
-                            .send(Ok(payload));
-                        stream_timestamp = stream_timestamp.wrapping_add(timestamp_step);
-                        waiting_for_keyframe = false;
-                    }
-                    Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {
-                        if !waiting_for_keyframe {
-                            let _ = session
-                                .handle_video_control(VideoControlMessage::RequestIdrFrame)
-                                .await;
+                let (header, payload) =
+                    match stream_frame(frame.bytes, stream_timestamp, frame.keyframe) {
+                        Ok(chunks) => chunks,
+                        Err(err) => {
+                            eprintln!("browser stream stopped: {err}");
+                            break;
                         }
-                        waiting_for_keyframe = true;
+                    };
+
+                // Wait for the HTTP consumer instead of dropping encoded frames.
+                // This stalls capture at the V4L2 queue, where frames can be
+                // discarded before the encoder and the reference chain stays
+                // intact, so no keyframe is required to recover.
+                let mut permits = tokio::select! {
+                    result = sender.reserve_many(2) => match result {
+                        Ok(permits) => permits,
+                        Err(_) => break,
+                    },
+                    result = cancellation.changed() => {
+                        let _ = result;
+                        break;
                     }
-                    Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => break,
-                }
-                tokio::task::yield_now().await;
+                };
+                permits.next().expect("two reserved slots").send(Ok(header));
+                permits
+                    .next()
+                    .expect("two reserved slots")
+                    .send(Ok(payload));
+                stream_timestamp = stream_timestamp.wrapping_add(timestamp_step);
             }
             let _ = session.stop().await;
             drop(lease);
@@ -275,6 +283,11 @@ impl BrowserCapture {
             HeaderValue::from_static("no-store, no-transform"),
         );
         headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
+        headers.insert("x-nanokvm-gop", HeaderValue::from(web_gop));
+        headers.insert(
+            "x-nanokvm-seek",
+            HeaderValue::from_static(if web_seek { "1" } else { "0" }),
+        );
         Ok(response)
     }
 }

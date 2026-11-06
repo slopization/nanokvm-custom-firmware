@@ -31,6 +31,7 @@ pub struct V4l2Settings {
     pub max_fps: u32,
     pub bitrate_kbps: Option<u32>,
     pub gop: u32,
+    pub wavefront: bool,
     pub hevc_loop_filter: Option<i32>,
     pub repeat_headers: bool,
     pub aud: bool,
@@ -506,6 +507,16 @@ fn configure_encoder(encoder: &Device, settings: &V4l2Settings) -> Result<(), Me
             id: ControlId::REPEAT_SEQ_HEADER,
             value: 1,
         });
+    }
+    if settings.wavefront {
+        set_optional_encoder_control(
+            encoder,
+            Control {
+                id: ControlId::HEVC_WAVEFRONT,
+                value: 1,
+            },
+            "HEVC wavefront",
+        );
     }
     if settings.codec == StreamCodec::Hevc {
         if let Some(value) = settings.hevc_loop_filter {

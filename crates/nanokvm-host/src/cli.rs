@@ -78,6 +78,10 @@ pub struct Args {
     pub bitrate_kbps: Option<u32>,
     #[arg(long, default_value_t = 30)]
     pub gop: u32,
+    #[arg(long)]
+    pub wavefront: bool,
+    #[arg(long)]
+    pub no_seek: bool,
     #[arg(long, default_value_t = 0)]
     pub video_fec_percentage: u8,
     #[arg(long, default_value_t = 2)]
@@ -172,6 +176,7 @@ impl Args {
             max_fps: self.max_fps,
             bitrate_kbps: self.bitrate_kbps,
             gop: self.gop,
+            wavefront: self.wavefront,
             hevc_loop_filter: self.hevc_loop_filter,
             repeat_headers: !self.no_repeat_headers,
             aud: !self.no_aud,

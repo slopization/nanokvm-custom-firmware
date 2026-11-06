@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::extract::{Path, Request, State};
-use axum::http::header::{CONTENT_TYPE, COOKIE, LOCATION};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, LOCATION};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -17,7 +17,7 @@ use crate::cli::AudioSettings;
 use crate::hid::UsbGadgetInputSink;
 use crate::pairing_manager::{PairingManager, PendingPairing};
 use crate::session_arbiter::SessionArbiter;
-use crate::settings::{MoonlinkSettings, SettingsStore};
+use crate::settings::{FlatSettings, Settings, SettingsStore};
 use crate::v4l2_provider::V4l2Settings;
 use moonlink_core::PairingStore;
 use moonlink_tokio::{FilePairingStore, ServerController};
@@ -77,7 +77,6 @@ pub async fn serve_web(
     let browser_capture =
         BrowserCapture::new(arbiter.clone(), settings.clone(), web_v4l2, web_audio);
     let pikvm_settings = settings.clone();
-    let pikvm_server = server.clone();
     let state = WebState {
         auth: auth.clone(),
         settings,
@@ -89,6 +88,10 @@ pub async fn serve_web(
     let protected = Router::new()
         .route("/api/password/change", post(change_password))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route(
+            "/api/settings/sections",
+            get(get_sections).put(put_sections),
+        )
         .route("/api/pairing", get(get_pairing_devices))
         .route(
             "/api/pairing/{client_id}",
@@ -112,6 +115,14 @@ pub async fn serve_web(
         .route("/libde265-worker.js", get(libde265_worker))
         .route("/vendor/libde265/libde265.mjs", get(libde265_script))
         .route("/vendor/libde265/libde265.wasm", get(libde265_wasm))
+        .route(
+            "/vendor/libde265-threaded/libde265.mjs",
+            get(libde265_threaded_script),
+        )
+        .route(
+            "/vendor/libde265-threaded/libde265.wasm",
+            get(libde265_threaded_wasm),
+        )
         .merge(protected)
         .with_state(state)
         .merge(crate::pikvm::routes(
@@ -120,13 +131,26 @@ pub async fn serve_web(
             atx,
             mass_storage,
             pikvm_settings,
-            pikvm_server,
-        ));
+        ))
+        .layer(middleware::from_fn(cross_origin_isolation));
     let listener = tokio::net::TcpListener::bind(bind).await?;
     println!("nanokvm web UI listening: http://{bind}");
     axum::serve(listener, router)
         .await
         .map_err(std::io::Error::other)
+}
+
+async fn cross_origin_isolation(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        "cross-origin-opener-policy",
+        HeaderValue::from_static("same-origin"),
+    );
+    response.headers_mut().insert(
+        "cross-origin-embedder-policy",
+        HeaderValue::from_static("require-corp"),
+    );
+    response
 }
 
 async fn index() -> Response {
@@ -173,8 +197,23 @@ async fn libde265_wasm() -> Response {
     ([(CONTENT_TYPE, "application/wasm")], LIBDE265_WASM).into_response()
 }
 
+async fn libde265_threaded_script() -> Response {
+    javascript(LIBDE265_THREADED_SCRIPT)
+}
+
+async fn libde265_threaded_wasm() -> Response {
+    ([(CONTENT_TYPE, "application/wasm")], LIBDE265_THREADED_WASM).into_response()
+}
+
 fn javascript(source: &'static str) -> Response {
-    ([(CONTENT_TYPE, "text/javascript; charset=utf-8")], source).into_response()
+    (
+        [
+            (CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "no-store, no-transform"),
+        ],
+        source,
+    )
+        .into_response()
 }
 
 async fn change_password(
@@ -193,21 +232,44 @@ async fn change_password(
 }
 
 async fn get_settings(State(state): State<WebState>) -> Response {
+    let settings = state.settings.get().await;
+    Json(FlatSettings::from_settings(&settings)).into_response()
+}
+
+async fn get_sections(State(state): State<WebState>) -> Response {
     Json(state.settings.get().await).into_response()
 }
 
-async fn put_settings(
-    State(state): State<WebState>,
-    Json(settings): Json<MoonlinkSettings>,
+async fn put_settings(State(state): State<WebState>, Json(flat): Json<FlatSettings>) -> Response {
+    let previous = state.settings.get().await;
+    let mut updated = previous.clone();
+    flat.apply_to(&mut updated);
+    apply_settings(state, previous, updated, false).await
+}
+
+async fn put_sections(State(state): State<WebState>, Json(settings): Json<Settings>) -> Response {
+    let previous = state.settings.get().await;
+    apply_settings(state, previous, settings, true).await
+}
+
+async fn apply_settings(
+    state: WebState,
+    previous: Settings,
+    updated: Settings,
+    web_touched: bool,
 ) -> Response {
-    let runtime_config = match settings.runtime_config() {
+    if let Err(err) = updated.validate() {
+        return message(StatusCode::BAD_REQUEST, err);
+    }
+    let runtime_config = match updated.moonlight_runtime_config() {
         Ok(config) => config,
         Err(err) => return message(StatusCode::BAD_REQUEST, err),
     };
-    let previous = state.settings.get().await;
-    let disconnect = settings.changes_stream(&previous);
-    let restart = settings.requires_restart(&previous);
-    match state.settings.save(settings).await {
+    let web_changed = web_touched && updated.web_stream_changed(&previous);
+    let moonlight_changed = updated.moonlight_stream_changed(&previous);
+    let restart = updated.requires_restart(&previous);
+
+    match state.settings.save(updated).await {
         Ok(()) => {
             if restart {
                 restart_service();
@@ -217,8 +279,11 @@ async fn put_settings(
                 );
             }
             state.server.apply_runtime_config(runtime_config);
-            if disconnect {
+            if moonlight_changed {
                 state.server.disconnect_clients().await;
+            }
+            if web_changed {
+                state.browser_capture.stop_active().await;
             }
             message(StatusCode::OK, "settings applied")
         }
@@ -352,3 +417,6 @@ const SOFTWARE_PLAYER_JS: &str = include_str!("../web/software-player.js");
 const LIBDE265_WORKER: &str = include_str!("../web/libde265-worker.js");
 const LIBDE265_SCRIPT: &str = include_str!("../web/vendor/libde265/libde265.mjs");
 const LIBDE265_WASM: &[u8] = include_bytes!("../web/vendor/libde265/libde265.wasm");
+const LIBDE265_THREADED_SCRIPT: &str = include_str!("../web/vendor/libde265-threaded/libde265.mjs");
+const LIBDE265_THREADED_WASM: &[u8] =
+    include_bytes!("../web/vendor/libde265-threaded/libde265.wasm");

@@ -88,8 +88,8 @@ impl MediaProvider for HostMediaProvider {
             } => {
                 let current = settings_store.get().await;
                 let mut audio = audio.clone();
-                current.apply_audio(&mut audio);
-                ExternalSession::start(command, current.codec, audio, config)
+                current.moonlight.apply_audio(&mut audio);
+                ExternalSession::start(command, current.moonlight.codec, audio, config)
                     .await
                     .map(|session| HostMediaSession::Command {
                         session,
@@ -105,8 +105,8 @@ impl MediaProvider for HostMediaProvider {
                 let current = settings_store.get().await;
                 let mut settings = settings.clone();
                 let mut audio = audio.clone();
-                current.apply_v4l2(&mut settings);
-                current.apply_audio(&mut audio);
+                current.moonlight.apply_v4l2(&mut settings);
+                current.moonlight.apply_audio(&mut audio);
                 V4l2Session::start(settings, audio, config)
                     .await
                     .map(|session| HostMediaSession::V4l2 {

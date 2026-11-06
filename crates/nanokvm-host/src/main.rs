@@ -30,19 +30,18 @@ use crate::hid::{InputDevicePaths, UsbGadgetInputSink};
 use crate::media::HostMediaProvider;
 use crate::pairing_manager::PairingManager;
 use crate::session_arbiter::SessionArbiter;
-use crate::settings::{MoonlinkSettings, SettingsStore};
+use crate::settings::{Settings, SettingsStore};
 use crate::usb_status::{monitor_usb_attachment, primary_ipv4, udc_state_path};
 use crate::web::serve_web;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = Args::parse();
-    let settings_store = SettingsStore::open(
-        args.settings_store.clone(),
-        MoonlinkSettings::from_args(&args),
-    )?;
+    let settings_store =
+        SettingsStore::open(args.settings_store.clone(), Settings::from_args(&args))?;
     let running_settings = settings_store.get().await;
-    running_settings.apply(&mut args);
+    running_settings.apply_device_args(&mut args);
+    running_settings.moonlight.apply_args(&mut args);
     let auth = auth::AuthState::open();
     let pairing_store = FilePairingStore::open(args.pairing_store.clone()).await?;
     let pairing_manager = PairingManager::default();
@@ -72,9 +71,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let source_kind = args.source_kind()?;
+    let mut web_args = args.clone();
+    running_settings.web.apply_args(&mut web_args);
+    let web_source_kind = web_args.source_kind()?;
     let audio = args.audio_settings();
-    let web_audio = audio.clone();
-    let runtime_config = running_settings.runtime_config()?;
+    let web_audio = web_args.audio_settings();
+    let runtime_config = running_settings.moonlight_runtime_config()?;
     let arbiter = SessionArbiter::default();
 
     let config = ServerConfig::new(
@@ -96,8 +98,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PairingPin::static_pin)
         .unwrap_or_else(|| PairingPin::provider(pairing_manager.clone()));
 
-    let web_v4l2 = match &source_kind {
-        SourceKind::V4l2(settings) => Some(settings.clone()),
+    let web_v4l2 = match web_source_kind {
+        SourceKind::V4l2(settings) => Some(settings),
         SourceKind::Command(_) => None,
     };
     let provider = match source_kind {

@@ -37,34 +37,22 @@ const append = (sourceBuffer, bytes, signal) =>
 const removeBuffered = (sourceBuffer, start, end, signal) =>
     waitForEvent(sourceBuffer, "updateend", "error", signal, () => sourceBuffer.remove(start, end));
 
-async function appendPending(sourceBuffer, pending, duration, sequence, signal) {
-    if (!Number.isSafeInteger(duration) || duration < 1 || duration > 0xffffffff) {
-        throw new Error("invalid HEVC sample duration");
-    }
-    await append(
-        sourceBuffer,
-        makeMediaFragment(
-            sequence,
-            pending.timestamp,
-            duration,
-            pending.keyframe,
-            annexBToSample(pending.bytes),
-        ),
-        signal,
-    );
-}
-
 export async function runNativeHevc(video, status, abortSignal) {
     if (typeof MediaSource === "undefined") {
         throw new NativeHevcUnavailable("Media Source Extensions are unavailable");
     }
     const stream = await openHevcStream(abortSignal);
+    if (stream.gop === 0) {
+        await stream.reader.cancel().catch(() => {});
+        throw new NativeHevcUnavailable("MSE requires a periodic keyframe; using software decoder");
+    }
     const { reader, input, width, height, fps, timescale } = stream;
     const timestamps = new TimestampUnwrapper();
+    const frameDuration = Math.max(1, Math.floor(timescale / Math.max(1, fps)));
     let sourceBuffer = null;
     let sequence = 1;
     let firstTimestamp;
-    let pending = null;
+    const keyframes = [];
     const mediaSource = new MediaSource();
     const objectUrl = URL.createObjectURL(mediaSource);
     video.src = objectUrl;
@@ -101,23 +89,56 @@ export async function runNativeHevc(video, status, abortSignal) {
                 timestamp: absoluteTimestamp - firstTimestamp,
                 keyframe: frame.keyframe,
             };
-            if (pending) {
-                await appendPending(
-                    sourceBuffer,
-                    pending,
-                    current.timestamp - pending.timestamp,
+            if (current.keyframe) keyframes.push(current.timestamp);
+
+            // The server emits one access unit per fixed frame interval. Append
+            // immediately with a constant duration instead of holding the
+            // previous frame until the next one arrives.
+            await append(
+                sourceBuffer,
+                makeMediaFragment(
                     sequence++,
-                    abortSignal,
-                );
-                if (video.buffered.length) {
-                    const liveEdge = video.buffered.end(video.buffered.length - 1);
-                    if (video.currentTime < liveEdge - 0.15) video.currentTime = liveEdge - 0.05;
+                    current.timestamp,
+                    frameDuration,
+                    current.keyframe,
+                    annexBToSample(current.bytes),
+                ),
+                abortSignal,
+            );
+
+            if (video.buffered.length) {
+                const liveEdge = video.buffered.end(video.buffered.length - 1);
+                const target = liveEdge - 0.05;
+                const bufferedStart = sourceBuffer.buffered.start(0);
+                // Seeking resets the decoder. Do not jump to the live edge
+                // if the nearest keyframe is far behind: a long GOP would
+                // force a full GOP re-decode and look like a freeze. Stay
+                // on the continuous decode path in that case.
+                let nearestKeyframe = null;
+                for (const timestamp of keyframes) {
+                    if (timestamp >= bufferedStart && timestamp <= target) nearestKeyframe = timestamp;
                 }
-                if (sourceBuffer.buffered.length && sourceBuffer.buffered.start(0) < video.currentTime - 2) {
-                    await removeBuffered(sourceBuffer, 0, video.currentTime - 1, abortSignal);
+                const canSeek = nearestKeyframe !== null && target - nearestKeyframe <= 1.0;
+                if (stream.seek && canSeek && video.currentTime < liveEdge - 0.15) {
+                    video.currentTime = target;
                 }
             }
-            pending = current;
+
+            // MSE removes every frame that depends on a removed frame up
+            // to the next random access point. Cut only at a keyframe so
+            // the remaining buffer stays decodable and P-frame appends are
+            // not discarded.
+            if (sourceBuffer.buffered.length && sourceBuffer.buffered.start(0) < video.currentTime - 2) {
+                const target = video.currentTime - 1;
+                let cut = null;
+                for (const timestamp of keyframes) {
+                    if (timestamp <= target) cut = timestamp;
+                }
+                if (cut !== null && cut > sourceBuffer.buffered.start(0)) {
+                    await removeBuffered(sourceBuffer, 0, cut, abortSignal);
+                    while (keyframes.length && keyframes[0] < cut) keyframes.shift();
+                }
+            }
         }
     } finally {
         await reader.cancel().catch(() => {});
