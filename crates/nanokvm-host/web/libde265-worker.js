@@ -10,18 +10,35 @@ async function initializeDecoder() {
     });
     decoder = new module.Decoder();
 
+    const cpus = navigator.hardwareConcurrency || 1;
     let threads = 0;
+    let threadError = "";
     if (threaded) {
-        threads = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4));
+        // The threaded WASM build has a fixed pool of four pthreads.
+        threads = Math.max(1, Math.min(4, cpus));
         try {
             const error = decoder.startWorkerThreads(threads);
-            if (!module.isOk(error)) threads = 0;
+            if (!module.isOk(error)) {
+                threadError = `startWorkerThreads failed (${error})`;
+                threads = 0;
+            }
         } catch (error) {
             threads = 0;
-            postMessage({ type: "threads_error", message: error.message || String(error) });
+            threadError = error.message || String(error);
         }
     }
-    postMessage({ type: "ready", threads, isolated: self.crossOriginIsolated });
+    if (threadError) {
+        postMessage({ type: "threads_error", message: threadError });
+    }
+    postMessage({
+        type: "ready",
+        threads,
+        threaded,
+        isolated: self.crossOriginIsolated,
+        shared: typeof SharedArrayBuffer !== "undefined",
+        cpus,
+        threadError,
+    });
 }
 
 function copyPlane(image, channel) {

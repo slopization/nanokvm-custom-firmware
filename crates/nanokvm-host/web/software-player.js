@@ -135,6 +135,7 @@ class SoftwareDecoder {
         this.ready = deferred();
         this.failure = null;
         this.threads = 0;
+        this.threadInfo = { threads: 0, isolated: false, shared: false, cpus: 0, threadError: "" };
         this.worker.onmessage = event => this.handle(event.data);
         this.worker.onerror = event => this.fail(new Error(event.message || "HEVC decoder worker failed"));
     }
@@ -148,8 +149,10 @@ class SoftwareDecoder {
             }
         } else if (message.type === "ready") {
             this.threads = message.threads || 0;
+            this.threadInfo = message;
             this.ready.resolve();
         } else if (message.type === "threads_error") {
+            this.threadInfo.threadError = message.message;
             console.warn("HEVC decoder threads unavailable:", message.message);
         } else if (message.type === "error") {
             this.fail(new Error(message.message));
@@ -192,7 +195,14 @@ export async function runSoftwareHevc(video, canvas, status, abortSignal) {
         reader = stream.reader;
         video.classList.add("hidden");
         canvas.classList.remove("hidden");
-        const threads = decoder.threads > 1 ? `${decoder.threads} threads` : "1 thread";
+        const info = decoder.threadInfo;
+        let threads = info.threads > 1 ? `${info.threads} threads` : "1 thread";
+        if (info.threads <= 1) {
+            if (!info.isolated) threads += " (not cross-origin isolated)";
+            else if (!info.shared) threads += " (no SharedArrayBuffer)";
+            else if (info.threadError) threads += ` (${info.threadError})`;
+            else if (info.cpus <= 1) threads += " (1 CPU)";
+        }
         status.textContent = `Software HEVC ${stream.width}x${stream.height} ${stream.fps} fps, ${threads}`;
         let started = false;
         while (!abortSignal.aborted) {
