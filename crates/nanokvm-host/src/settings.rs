@@ -207,7 +207,7 @@ impl MoonlightSettings {
             self.bitrate_kbps,
             self.opus_bitrate_kbps,
             self.opus_complexity,
-            false,
+            true,
         )
     }
 }
@@ -699,9 +699,9 @@ mod tests {
     }
 
     #[test]
-    fn moonlight_rejects_zero_gop() {
+    fn moonlight_allows_no_periodic_gop() {
         let mut settings = defaults();
         settings.moonlight.gop = 0;
-        assert!(settings.validate().is_err());
+        assert!(settings.validate().is_ok());
     }
 }

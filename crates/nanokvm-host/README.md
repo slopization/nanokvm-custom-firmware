@@ -127,7 +127,7 @@ evict buffered data, so the no-GOP stream cannot use the native MSE path. The
 no-GOP path relies on forward-only playback, a forced keyframe at session
 start, and backpressure to the V4L2 capture queue. With `web.gop >= 1`, the
 player uses MSE and evicts only up to the latest buffered keyframe.
-Moonlight requires `moonlight.gop >= 1` and uses its own on-demand IDR policy.
+Both streams allow `gop = 0`. Moonlight starts with a forced keyframe and then uses its on-demand IDR policy; the client requests recovery frames when needed.
 
 The NanoKVM settings window and the PiKVM **Streamer** menu both read
 `GET/PUT /api/settings/sections`; the window has separate **Web KVM** and
