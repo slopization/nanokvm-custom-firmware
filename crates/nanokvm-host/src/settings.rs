@@ -235,6 +235,9 @@ fn validate_stream(
     if !fps.is_multiple_of(divider) {
         return Err("capture FPS must be divisible by the frame divider");
     }
+    if gop > 2047 {
+        return Err("GOP must be at most 2047");
+    }
     if gop == 0 && !allow_no_gop {
         return Err("GOP must be at least 1");
     }
@@ -682,6 +685,17 @@ mod tests {
         let mut settings = defaults();
         settings.web.gop = 0;
         assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_out_of_range_gop() {
+        let mut settings = defaults();
+        settings.web.gop = 2048;
+        assert!(settings.validate().is_err());
+
+        let mut settings = defaults();
+        settings.moonlight.gop = 2048;
+        assert!(settings.validate().is_err());
     }
 
     #[test]
